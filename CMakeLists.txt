@@ -33,8 +33,17 @@ set(SOURCES
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# FIX: Enable M_PI for MinGW/GCC
+target_compile_definitions(${PROJECT_NAME} PRIVATE _USE_MATH_DEFINES)
+
 # Link SDL2 and SDL2_ttf
-target_link_libraries(${PROJECT_NAME} ${SDL2_LIBRARIES} ${SDL2_TTF_LIBRARIES})
+# Added mingw32 and SDL2main for Windows entry-point compatibility
+target_link_libraries(${PROJECT_NAME} 
+    mingw32 
+    SDL2main 
+    ${SDL2_LIBRARIES} 
+    ${SDL2_TTF_LIBRARIES}
+)
 
 # Compiler warnings
 target_compile_options(${PROJECT_NAME} PRIVATE

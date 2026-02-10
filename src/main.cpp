@@ -1,8 +1,9 @@
 #include "../include/GameEngine.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <SDL2/SDL.h>
 
-int main() {
+int main(int argc, char* argv[]) {
   std::cout << "=== Greedy Tangle ===" << std::endl;
   std::cout << "A Competitive Graph Theory Puzzle" << std::endl;
   std::cout << "-----------------------------------" << std::endl;

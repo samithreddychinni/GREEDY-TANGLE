@@ -11,6 +11,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#define _USE_MATH_DEFINES
+
 namespace GreedyTangle {
 
 GameEngine::~GameEngine() { Cleanup(); }
@@ -771,6 +773,9 @@ void GameEngine::ApplyCircleScramble() {
     }
   }
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
   for (size_t i = 0; i < n; ++i) {
     // Place node order[i] at position i on circle
     float angle = 2.0f * M_PI * static_cast<float>(i) / n - M_PI / 2.0f;
