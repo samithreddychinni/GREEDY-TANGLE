@@ -21,7 +21,15 @@ bool MenuBar::Init(SDL_Renderer *rend, const std::string &fontPath) {
   // Try multiple font paths - comprehensive search
   std::vector<std::string> fontPaths = {
       fontPath,
-      // Fedora paths (first priority for Fedora systems)
+      // Windows Fonts
+      "c:/windows/fonts/arial.ttf",
+      "c:/windows/fonts/consola.ttf",
+      "c:/windows/fonts/segoeui.ttf",
+      // macOS Fonts
+      "/Library/Fonts/Arial.ttf",
+      "/System/Library/Fonts/Helvetica.ttc",
+      "/System/Library/Fonts/Supplemental/Arial.ttf",
+      // Linux/Unix Fonts
       "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
       "/usr/share/fonts/dejavu-sans-fonts/DejaVuSansCondensed.ttf",
       // DejaVu fonts (other distros)

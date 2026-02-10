@@ -11,14 +11,24 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find SDL2 and SDL2_ttf
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL2 REQUIRED sdl2)
-pkg_check_modules(SDL2_TTF REQUIRED SDL2_ttf)
+pkg_check_modules(SDL2 sdl2)
+pkg_check_modules(SDL2_TTF SDL2_ttf)
+
+# Fallback finding if pkg-config fails (common on Windows)
+if(NOT SDL2_FOUND)
+    find_package(SDL2 REQUIRED)
+endif()
+if(NOT SDL2_TTF_FOUND)
+    find_package(SDL2_TTF REQUIRED)
+endif()
 
 # Include directories
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${SDL2_INCLUDE_DIRS}
     ${SDL2_TTF_INCLUDE_DIRS}
+    ${SDL2_INCLUDE_DIR} # From find_package
+    ${SDL2_TTF_INCLUDE_DIR}
 )
 
 # Source files
