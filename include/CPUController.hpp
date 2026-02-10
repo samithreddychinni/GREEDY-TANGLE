@@ -3,6 +3,7 @@
 #include "GraphData.hpp"
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace GreedyTangle {
 
