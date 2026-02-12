@@ -56,6 +56,11 @@ public:
     HARD    // Many edges
   };
 
+  // Game modes
+  enum class GameMode {
+    GREEDY
+  };
+
 private:
   // SDL handles
   SDL_Window *window = nullptr;
@@ -102,6 +107,7 @@ private:
   // Game settings
   int currentNodeCount = 10; // Default changed to 10
   Difficulty currentDifficulty = Difficulty::MEDIUM;
+  GameMode currentMode = GameMode::GREEDY;
 
   // Custom node count input dialog
   bool showInputDialog = false;
@@ -215,6 +221,7 @@ public:
   void StartNewGame();
   void SetNodeCount(int count);
   void SetDifficulty(Difficulty diff);
+  void SetGameMode(GameMode mode);
 
 private:
   /**

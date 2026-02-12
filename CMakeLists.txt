@@ -47,13 +47,17 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 target_compile_definitions(${PROJECT_NAME} PRIVATE _USE_MATH_DEFINES)
 
 # Link SDL2 and SDL2_ttf
-# Added mingw32 and SDL2main for Windows entry-point compatibility
 target_link_libraries(${PROJECT_NAME} 
-    mingw32 
-    SDL2main 
     ${SDL2_LIBRARIES} 
     ${SDL2_TTF_LIBRARIES}
 )
+
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} 
+        mingw32 
+        SDL2main
+    )
+endif()
 
 # Compiler warnings
 target_compile_options(${PROJECT_NAME} PRIVATE

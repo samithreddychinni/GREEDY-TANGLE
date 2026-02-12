@@ -903,6 +903,13 @@ void GameEngine::SetupMenus() {
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
 
+  // Mode menu
+  std::vector<MenuItem> modeMenu = {
+      MenuItem(
+          "Greedy", [this]() { SetGameMode(GameMode::GREEDY); }, true,
+          currentMode == GameMode::GREEDY)};
+  menuBar->AddMenu("Mode", modeMenu);
+
   // Settings menu - Node counts: 10, 15, 20, Custom (max 200)
   std::vector<MenuItem> settingsMenu = {
       MenuItem(
@@ -959,9 +966,10 @@ void GameEngine::SetNodeCount(int count) {
   // Menu layout: 0: 10 Nodes, 1: 15 Nodes, 2: 20 Nodes, 3: Custom...
   // 4: separator, 5: Easy, 6: Medium, 7: Hard
   if (menuBar) {
-    menuBar->SetItemChecked(1, 0, count == 10);
-    menuBar->SetItemChecked(1, 1, count == 15);
-    menuBar->SetItemChecked(1, 2, count == 20);
+    // Settings is now at index 2
+    menuBar->SetItemChecked(2, 0, count == 10);
+    menuBar->SetItemChecked(2, 1, count == 15);
+    menuBar->SetItemChecked(2, 2, count == 20);
     // Custom option stays unchecked (non-checkable)
   }
 
@@ -973,9 +981,22 @@ void GameEngine::SetDifficulty(Difficulty diff) {
 
   // Difficulty at indices 5, 6, 7
   if (menuBar) {
-    menuBar->SetItemChecked(1, 5, diff == Difficulty::EASY);
-    menuBar->SetItemChecked(1, 6, diff == Difficulty::MEDIUM);
-    menuBar->SetItemChecked(1, 7, diff == Difficulty::HARD);
+    // Settings is now at index 2
+    menuBar->SetItemChecked(2, 5, diff == Difficulty::EASY);
+    menuBar->SetItemChecked(2, 6, diff == Difficulty::MEDIUM);
+    menuBar->SetItemChecked(2, 7, diff == Difficulty::HARD);
+  }
+
+  StartNewGame();
+}
+
+void GameEngine::SetGameMode(GameMode mode) {
+  currentMode = mode;
+
+  if (menuBar) {
+    // Mode menu is at index 1
+    // Greedy is item 0
+    menuBar->SetItemChecked(1, 0, mode == GameMode::GREEDY);
   }
 
   StartNewGame();
