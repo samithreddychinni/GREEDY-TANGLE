@@ -65,6 +65,9 @@ private:
                   const std::vector<Edge> &edges,
                   const Partition &partition);
 
+  CPUMove SolveGreedyFallback(std::vector<Node> &nodes,
+                              const std::vector<Edge> &edges);
+
   void BoundaryRefinement(std::vector<Node> &nodes,
                           const std::vector<Edge> &edges,
                           float splitX);

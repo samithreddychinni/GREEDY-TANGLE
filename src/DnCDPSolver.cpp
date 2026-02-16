@@ -1,4 +1,5 @@
 #include "DnCDPSolver.hpp"
+#include "GreedySolver.hpp"
 #include "MathUtils.hpp"
 #include <algorithm>
 #include <chrono>
@@ -354,6 +355,15 @@ void DnCDPSolver::BoundaryRefinement(std::vector<Node> &nodes,
   }
 }
 
+CPUMove DnCDPSolver::SolveGreedyFallback(std::vector<Node> &nodes,
+                                         const std::vector<Edge> &edges) {
+  std::cout << "[D&C+DP] Fallback to Greedy Solver (Local Minima Escape)..." << std::endl;
+  GreedySolver greedy;
+  CPUMove move = greedy.FindBestMove(nodes, edges);
+  lastCandidatesEvaluated_ += greedy.GetLastCandidatesEvaluated();
+  return move;
+}
+
 CPUMove DnCDPSolver::FindBestMove(std::vector<Node> nodes,
                                    const std::vector<Edge> &edges) {
   auto start_time = std::chrono::steady_clock::now();
@@ -374,6 +384,15 @@ CPUMove DnCDPSolver::FindBestMove(std::vector<Node> nodes,
 
   Partition fullPartition = CreatePartition(allIndices, nodes);
   CPUMove best_move = SolvePartition(nodes, edges, fullPartition);
+
+  // Fallback to Greedy if D&C+DP is stuck but intersections remain
+  if ((!best_move.isValid() || best_move.intersection_reduction <= 0) && current_intersections > 0) {
+    CPUMove fallbackMove = SolveGreedyFallback(nodes, edges);
+    if (fallbackMove.isValid() && fallbackMove.intersection_reduction > 0) {
+      best_move = fallbackMove;
+    }
+  }
+
   best_move.intersections_before = current_intersections;
 
   auto end_time = std::chrono::steady_clock::now();
