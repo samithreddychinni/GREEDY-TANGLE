@@ -23,62 +23,7 @@ struct CPUMove {
   bool isValid() const { return node_id >= 0; }
 };
 
-/**
- * CPUController - Greedy algorithm for CPU opponent
- *
- * Algorithm: O(N × K × E²)
- *   N = number of nodes
- *   K = number of candidate positions (~50-100)
- *   E = number of edges
- *
- * The CPU evaluates every possible single-node move and selects
- * the one that maximizes immediate intersection reduction.
- */
-class CPUController {
-public:
-  // Configuration constants
-  static constexpr float GRID_SPACING = 80.0f;   // Pixels between sample points
-  static constexpr float MARGIN = 60.0f;         // Border margin
-  static constexpr float WINDOW_WIDTH = 1024.0f; // Match GameEngine
-  static constexpr float WINDOW_HEIGHT = 768.0f;
 
-  CPUController() = default;
-
-  /**
-   * Find the best greedy move for the current graph state
-   * @param nodes Current node positions (will be modified temporarily)
-   * @param edges Graph edges (read-only)
-   * @return CPUMove with best node and position, or invalid move if stuck
-   */
-  CPUMove FindBestMove(std::vector<Node> nodes, const std::vector<Edge> &edges);
-
-  /**
-   * Get statistics about the last move computation
-   */
-  int GetLastCandidatesEvaluated() const { return lastCandidatesEvaluated_; }
-
-private:
-  /**
-   * Generate candidate positions using grid sampling
-   * Also includes neighbor-relative positions for smarter placement
-   */
-  std::vector<Vec2> GenerateCandidatePositions(int node_id,
-                                               const std::vector<Node> &nodes);
-
-  /**
-   * Count intersections with a node temporarily moved
-   * @param nodes Copy of nodes (will modify position of node_id)
-   * @param edges Graph edges
-   * @param node_id Node to move
-   * @param new_position Target position
-   * @return Number of intersections after the move
-   */
-  int CountIntersectionsWithMove(std::vector<Node> nodes,
-                                 const std::vector<Edge> &edges, int node_id,
-                                 Vec2 new_position);
-
-  int lastCandidatesEvaluated_ = 0;
-};
 
 /**
  * ReplayLogger - Records CPU game history for replay
