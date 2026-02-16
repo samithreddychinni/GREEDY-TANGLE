@@ -79,4 +79,45 @@ std::vector<Edge> DnCDPSolver::GetRelevantEdges(
   return relevant;
 }
 
+CPUMove DnCDPSolver::SolveBaseCase(std::vector<Node> &nodes,
+                                    const std::vector<Edge> &edges,
+                                    const Partition &partition) {
+  CPUMove best_move;
+  int current_intersections = CountIntersections(nodes, edges);
+  best_move.intersections_before = current_intersections;
+  int best_reduction = 0;
+
+  for (int nodeIdx : partition.nodeIndices) {
+    Vec2 original = nodes[nodeIdx].position;
+
+    float stepX = (partition.xMax - partition.xMin) / 6.0f;
+    float stepY = (partition.yMax - partition.yMin) / 6.0f;
+    if (stepX < 20.0f) stepX = 20.0f;
+    if (stepY < 20.0f) stepY = 20.0f;
+
+    for (float x = MARGIN; x <= WINDOW_WIDTH - MARGIN; x += stepX) {
+      for (float y = MARGIN; y <= WINDOW_HEIGHT - MARGIN; y += stepY) {
+        ++lastCandidatesEvaluated_;
+
+        nodes[nodeIdx].position = Vec2(x, y);
+        int newCount = CountIntersections(nodes, edges);
+        int reduction = current_intersections - newCount;
+
+        if (reduction > best_reduction) {
+          best_reduction = reduction;
+          best_move.node_id = nodeIdx;
+          best_move.from_position = original;
+          best_move.to_position = Vec2(x, y);
+          best_move.intersections_after = newCount;
+          best_move.intersection_reduction = reduction;
+        }
+      }
+    }
+
+    nodes[nodeIdx].position = original;
+  }
+
+  return best_move;
+}
+
 }
