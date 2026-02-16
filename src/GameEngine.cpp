@@ -53,8 +53,7 @@ void GameEngine::Init() {
 
   isRunning = true;
 
-  // Initialize CPU Controller for race mode
-  cpuController_ = std::make_unique<CPUController>();
+  currentSolver_ = CreateSolver(static_cast<SolverMode>(currentMode));
   cpuReplayLogger_ = std::make_unique<ReplayLogger>();
 
   std::cout << "[GameEngine] Initialized successfully" << std::endl;
