@@ -235,34 +235,33 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
 
   int bestCost = dp[numNodes - 1][bestJ];
 
-  int bestNodeIdx = -1;
-  Vec2 bestPosition;
-  int bestReduction = 0;
-
-  for (int i = numNodes - 1; i >= 0; --i) {
-    int nodeIdx = ordered[i];
-    Vec2 original = nodes[nodeIdx].position;
-    int reduction = currentTotal - bestCost;
-
-    if (reduction > bestReduction) {
-      bestReduction = reduction;
-      bestNodeIdx = nodeIdx;
-      bestPosition = candidates[bestJ];
-    }
-
-    if (i > 0) {
-      bestJ = bestPrev[i][bestJ];
-    }
+  std::vector<int> tracedPositions(numNodes);
+  tracedPositions[numNodes - 1] = bestJ;
+  for (int i = numNodes - 2; i >= 0; --i) {
+    tracedPositions[i] = bestPrev[i + 1][tracedPositions[i + 1]];
+    if (tracedPositions[i] < 0) tracedPositions[i] = 0;
   }
 
   CPUMove move;
   move.intersections_before = currentTotal;
-  if (bestNodeIdx >= 0 && bestReduction > 0) {
-    move.node_id = bestNodeIdx;
-    move.from_position = nodes[bestNodeIdx].position;
-    move.to_position = bestPosition;
-    move.intersections_after = currentTotal - bestReduction;
-    move.intersection_reduction = bestReduction;
+  int bestReduction = 0;
+
+  for (int i = 0; i < numNodes; ++i) {
+    int nodeIdx = ordered[i];
+    int posIdx = tracedPositions[i];
+    Vec2 candidatePos = candidates[posIdx];
+
+    int cost = EvaluatePlacement(nodes, edges, nodeIdx, candidatePos);
+    int reduction = currentTotal - cost;
+
+    if (reduction > bestReduction) {
+      bestReduction = reduction;
+      move.node_id = nodeIdx;
+      move.from_position = nodes[nodeIdx].position;
+      move.to_position = candidatePos;
+      move.intersections_after = cost;
+      move.intersection_reduction = reduction;
+    }
   }
 
   return move;
