@@ -48,6 +48,43 @@ CPUMove GreedySolver::FindBestMove(std::vector<Node> nodes,
     }
   }
 
+  if (best_reduction == 0) {
+    float max_min_distance = 0.0f;
+
+    for (size_t node_idx = 0; node_idx < nodes.size(); ++node_idx) {
+      Vec2 original_position = nodes[node_idx].position;
+      std::vector<Vec2> candidates =
+          GenerateCandidatePositions(static_cast<int>(node_idx), nodes);
+
+      for (const Vec2 &candidate : candidates) {
+        int new_intersections = CountIntersectionsWithMove(
+            nodes, edges, static_cast<int>(node_idx), candidate);
+
+        int reduction = current_intersections - new_intersections;
+
+        if (reduction == 0) {
+          float min_dist = std::numeric_limits<float>::max();
+          for (size_t other = 0; other < nodes.size(); ++other) {
+            if (other != node_idx) {
+              Vec2 diff = candidate - nodes[other].position;
+              float dist = diff.magnitude();
+              min_dist = std::min(min_dist, dist);
+            }
+          }
+
+          if (min_dist > max_min_distance) {
+            max_min_distance = min_dist;
+            best_move.node_id = static_cast<int>(node_idx);
+            best_move.from_position = original_position;
+            best_move.to_position = candidate;
+            best_move.intersections_after = new_intersections;
+            best_move.intersection_reduction = 0;
+          }
+        }
+      }
+    }
+  }
+
   auto end_time = std::chrono::steady_clock::now();
   best_move.computation_time_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(end_time -
