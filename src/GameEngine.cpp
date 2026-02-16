@@ -1249,7 +1249,7 @@ void GameEngine::StartNextCPUMove() {
   auto edges_copy = edges;
 
   cpuFuture_ = std::async(std::launch::async, [this, nodes_copy, edges_copy]() {
-    return cpuController_->FindBestMove(nodes_copy, edges_copy);
+    return currentSolver_->FindBestMove(nodes_copy, edges_copy);
   });
 }
 
