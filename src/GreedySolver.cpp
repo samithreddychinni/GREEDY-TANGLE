@@ -67,4 +67,67 @@ CPUMove GreedySolver::FindBestMove(std::vector<Node> nodes,
   return best_move;
 }
 
+std::vector<Vec2>
+GreedySolver::GenerateCandidatePositions(int node_id,
+                                         const std::vector<Node> &nodes) {
+  std::vector<Vec2> candidates;
+
+  for (float x = MARGIN; x <= WINDOW_WIDTH - MARGIN; x += GRID_SPACING) {
+    for (float y = MARGIN; y <= WINDOW_HEIGHT - MARGIN; y += GRID_SPACING) {
+      candidates.emplace_back(x, y);
+    }
+  }
+
+  if (node_id >= 0 && node_id < static_cast<int>(nodes.size())) {
+    const Node &target = nodes[node_id];
+    float radius = 40.0f;
+
+    for (int neighbor_id : target.adjacencyList) {
+      if (neighbor_id >= 0 && neighbor_id < static_cast<int>(nodes.size())) {
+        const Vec2 &neighbor_pos = nodes[neighbor_id].position;
+
+        for (int i = 0; i < 8; ++i) {
+          float angle = 2.0f * M_PI * static_cast<float>(i) / 8.0f;
+          Vec2 offset(std::cos(angle) * radius, std::sin(angle) * radius);
+          Vec2 candidate = neighbor_pos + offset;
+
+          candidate.x =
+              std::max(MARGIN, std::min(WINDOW_WIDTH - MARGIN, candidate.x));
+          candidate.y =
+              std::max(MARGIN, std::min(WINDOW_HEIGHT - MARGIN, candidate.y));
+
+          candidates.push_back(candidate);
+        }
+      }
+    }
+  }
+
+  if (node_id >= 0 && node_id < static_cast<int>(nodes.size())) {
+    const Node &target = nodes[node_id];
+    if (!target.adjacencyList.empty()) {
+      Vec2 centroid(0, 0);
+      for (int neighbor_id : target.adjacencyList) {
+        if (neighbor_id >= 0 && neighbor_id < static_cast<int>(nodes.size())) {
+          centroid = centroid + nodes[neighbor_id].position;
+        }
+      }
+      centroid =
+          centroid * (1.0f / static_cast<float>(target.adjacencyList.size()));
+      candidates.push_back(centroid);
+    }
+  }
+
+  return candidates;
+}
+
+int GreedySolver::CountIntersectionsWithMove(std::vector<Node> nodes,
+                                             const std::vector<Edge> &edges,
+                                             int node_id, Vec2 new_position) {
+  if (node_id >= 0 && node_id < static_cast<int>(nodes.size())) {
+    nodes[node_id].position = new_position;
+  }
+
+  return CountIntersections(nodes, edges);
+}
+
 }
