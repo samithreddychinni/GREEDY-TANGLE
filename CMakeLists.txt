@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(GreedyTangle VERSION 0.1.0 LANGUAGES CXX)
+project(GreedyTangle VERSION 0.2.0 LANGUAGES CXX)
 
 # C++20 Standard
 set(CMAKE_CXX_STANDARD 20)

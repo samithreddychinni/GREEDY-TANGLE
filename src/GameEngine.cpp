@@ -949,7 +949,7 @@ void GameEngine::SetupMenus() {
       MenuItem("About", []() {
         std::cout << "\n=== Greedy Tangle ===" << std::endl;
         std::cout << "A Graph Theory Puzzle Game" << std::endl;
-        std::cout << "Version 0.1.0\n" << std::endl;
+        std::cout << "Version 0.2.0\n" << std::endl;
       })};
   menuBar->AddMenu("Help", helpMenu);
 }

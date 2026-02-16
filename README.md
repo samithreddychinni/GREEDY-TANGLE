@@ -1,6 +1,22 @@
 # Greedy Tangle
 
-A Competitive Graph Theory Puzzle game.
+A Competitive Graph Theory Puzzle game where you race against a CPU solver to untangle a graph.
+
+## Game Modes
+
+Choose your opponent's strategy from the **Mode** menu:
+
+1. **Greedy Solver**: Local optimization. Moves nodes to positions that immediately maximize intersection reduction. Fast but can get stuck in local minima.
+2. **D&C + DP Hybrid**: Divide & Conquer with Dynamic Programming. Spatially partitions the graph, uses DP to solve sub-regions optimally, and refines boundaries. Slower but more robust against complex tangles.
+
+## How to Play
+
+1. **Goal**: Untangle the graph so no edges cross (all edges turn green).
+2. **Race**: The CPU starts solving immediately on a copy of the graph. Be faster than the algorithm!
+3. **Controls**:
+   - **Left Click + Drag**: Move nodes.
+   - **ESC**: Quit.
+   - **Menu Bar**: Change difficulty, node count, or solver mode.
 
 ## Prerequisites
 
