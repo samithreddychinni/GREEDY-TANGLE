@@ -1,5 +1,6 @@
 #include "SolverFactory.hpp"
 #include "GreedySolver.hpp"
+#include "DnCDPSolver.hpp"
 
 namespace GreedyTangle {
 
@@ -8,7 +9,7 @@ std::unique_ptr<ICPUSolver> CreateSolver(SolverMode mode) {
   case SolverMode::GREEDY:
     return std::make_unique<GreedySolver>();
   case SolverMode::DIVIDE_AND_CONQUER_DP:
-    return std::make_unique<GreedySolver>();
+    return std::make_unique<DnCDPSolver>();
   default:
     return std::make_unique<GreedySolver>();
   }

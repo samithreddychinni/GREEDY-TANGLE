@@ -40,6 +40,7 @@ set(SOURCES
     src/CPUController.cpp
     src/GreedySolver.cpp
     src/SolverFactory.cpp
+    src/DnCDPSolver.cpp
 )
 
 # Executable
