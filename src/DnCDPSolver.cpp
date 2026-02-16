@@ -178,4 +178,94 @@ int DnCDPSolver::EvaluatePlacement(std::vector<Node> &nodes,
   return intersections;
 }
 
+CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
+                              const std::vector<Edge> &edges,
+                              const Partition &partition) {
+  std::vector<int> ordered = OrderNodesByDegree(partition.nodeIndices, nodes);
+  std::vector<Vec2> candidates = GenerateDPCandidates(partition);
+
+  if (ordered.empty() || candidates.empty()) {
+    return CPUMove();
+  }
+
+  int numNodes = static_cast<int>(ordered.size());
+  int numCandidates = static_cast<int>(candidates.size());
+
+  std::vector<std::vector<int>> dp(numNodes, std::vector<int>(numCandidates,
+      std::numeric_limits<int>::max()));
+  std::vector<std::vector<int>> bestPrev(numNodes, std::vector<int>(numCandidates, -1));
+
+  int currentTotal = CountIntersections(nodes, edges);
+
+  int firstNode = ordered[0];
+  Vec2 firstOriginal = nodes[firstNode].position;
+  for (int j = 0; j < numCandidates; ++j) {
+    ++lastCandidatesEvaluated_;
+    dp[0][j] = EvaluatePlacement(nodes, edges, firstNode, candidates[j]);
+  }
+
+  for (int i = 1; i < numNodes; ++i) {
+    int nodeIdx = ordered[i];
+
+    int prevBestJ = 0;
+    for (int j = 1; j < numCandidates; ++j) {
+      if (dp[i - 1][j] < dp[i - 1][prevBestJ]) {
+        prevBestJ = j;
+      }
+    }
+
+    int prevNode = ordered[i - 1];
+    nodes[prevNode].position = candidates[prevBestJ];
+
+    for (int j = 0; j < numCandidates; ++j) {
+      ++lastCandidatesEvaluated_;
+      dp[i][j] = EvaluatePlacement(nodes, edges, nodeIdx, candidates[j]);
+      bestPrev[i][j] = prevBestJ;
+    }
+
+    nodes[prevNode].position = firstOriginal;
+  }
+
+  int bestJ = 0;
+  for (int j = 1; j < numCandidates; ++j) {
+    if (dp[numNodes - 1][j] < dp[numNodes - 1][bestJ]) {
+      bestJ = j;
+    }
+  }
+
+  int bestCost = dp[numNodes - 1][bestJ];
+
+  int bestNodeIdx = -1;
+  Vec2 bestPosition;
+  int bestReduction = 0;
+
+  for (int i = numNodes - 1; i >= 0; --i) {
+    int nodeIdx = ordered[i];
+    Vec2 original = nodes[nodeIdx].position;
+    int reduction = currentTotal - bestCost;
+
+    if (reduction > bestReduction) {
+      bestReduction = reduction;
+      bestNodeIdx = nodeIdx;
+      bestPosition = candidates[bestJ];
+    }
+
+    if (i > 0) {
+      bestJ = bestPrev[i][bestJ];
+    }
+  }
+
+  CPUMove move;
+  move.intersections_before = currentTotal;
+  if (bestNodeIdx >= 0 && bestReduction > 0) {
+    move.node_id = bestNodeIdx;
+    move.from_position = nodes[bestNodeIdx].position;
+    move.to_position = bestPosition;
+    move.intersections_after = currentTotal - bestReduction;
+    move.intersection_reduction = bestReduction;
+  }
+
+  return move;
+}
+
 }
