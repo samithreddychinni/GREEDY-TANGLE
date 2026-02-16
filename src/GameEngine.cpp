@@ -1009,11 +1009,19 @@ void GameEngine::CheckVictory() {
   if (currentPhase != GamePhase::PLAYING)
     return;
 
+  // If CPU already won, don't give human a victory
+  if (winner_ == "cpu")
+    return;
+
   // Victory when no intersections
   if (intersectionCount == 0 && !edges.empty()) {
     // Record time
     auto now = std::chrono::steady_clock::now();
     gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
+
+    if (winner_.empty()) {
+      winner_ = "human";
+    }
 
     // Start victory blink animation
     victoryStartTime = now;
@@ -1053,12 +1061,23 @@ void GameEngine::RenderVictoryScreen() {
   int lineHeight = 40;
   int boxHeight = 32;
 
-  // Title bar - VICTORY!
+  // Title bar - show winner
   SDL_SetRenderDrawColor(renderer, 50, 205, 50, 255);
   SDL_Rect titleBar = {panelX + 20, textY, panelW - 40, boxHeight};
   SDL_RenderFillRect(renderer, &titleBar);
   if (menuBar) {
-    menuBar->RenderTextCentered("VICTORY!", titleBar, {20, 20, 25, 255});
+    std::string title = "VICTORY!";
+    if (winner_ == "cpu") {
+      title = "CPU WINS!";
+      SDL_SetRenderDrawColor(renderer, 220, 50, 50, 255);
+      SDL_Rect titleBarRed = {panelX + 20, textY, panelW - 40, boxHeight};
+      SDL_RenderFillRect(renderer, &titleBarRed);
+    } else if (winner_ == "human") {
+      title = "YOU WIN!";
+    } else if (winner_ == "tie") {
+      title = "TIE!";
+    }
+    menuBar->RenderTextCentered(title, titleBar, {20, 20, 25, 255});
   }
 
   textY += lineHeight + 15;
@@ -1327,6 +1346,18 @@ void GameEngine::UpdateCPURace() {
           cpuFinished_ = true;
           std::cout << "[CPU] Solved in " << cpuMoveCount_ << " moves!"
                     << std::endl;
+
+          // CPU wins if human hasn't solved yet
+          if (intersectionCount > 0 && winner_.empty()) {
+            winner_ = "cpu";
+            auto now = std::chrono::steady_clock::now();
+            gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
+            victoryStartTime = now;
+            blinkCount = 0;
+            currentPhase = GamePhase::VICTORY_BLINK;
+            std::cout << "[Game] CPU WINS! Solved in " << cpuMoveCount_
+                      << " moves" << std::endl;
+          }
         }
       } else {
         // CPU is stuck
