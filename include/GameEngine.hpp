@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CPUController.hpp"
+#include "ICPUSolver.hpp"
+#include "SolverFactory.hpp"
 #include "GraphData.hpp"
 #include "MenuBar.hpp"
 #ifdef _WIN32
@@ -56,9 +58,9 @@ public:
     HARD    // Many edges
   };
 
-  // Game modes
   enum class GameMode {
-    GREEDY
+    GREEDY,
+    DIVIDE_AND_CONQUER_DP
   };
 
 private:
@@ -114,8 +116,7 @@ private:
   std::string inputBuffer;
   std::chrono::steady_clock::time_point inputCursorBlink;
 
-  // CPU Controller and replay system
-  std::unique_ptr<CPUController> cpuController_;
+  std::unique_ptr<ICPUSolver> currentSolver_;
   std::unique_ptr<ReplayLogger> cpuReplayLogger_;
   std::future<CPUMove> cpuFuture_;
   CPUMove currentCPUMove_;
