@@ -215,6 +215,7 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
     }
 
     int prevNode = ordered[i - 1];
+    Vec2 prevOriginal = nodes[prevNode].position;
     nodes[prevNode].position = candidates[prevBestJ];
 
     for (int j = 0; j < numCandidates; ++j) {
@@ -223,7 +224,7 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
       bestPrev[i][j] = prevBestJ;
     }
 
-    nodes[prevNode].position = firstOriginal;
+    nodes[prevNode].position = prevOriginal;
   }
 
   int bestJ = 0;
