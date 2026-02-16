@@ -270,11 +270,20 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
 CPUMove DnCDPSolver::SolvePartition(std::vector<Node> &nodes,
                                      const std::vector<Edge> &edges,
                                      const Partition &partition) {
-  if (static_cast<int>(partition.nodeIndices.size()) <= BASE_CASE_THRESHOLD) {
+  int partSize = static_cast<int>(partition.nodeIndices.size());
+
+  if (partSize <= BASE_CASE_THRESHOLD) {
+    std::cout << "[D&C+DP] Base case: " << partSize << " nodes" << std::endl;
     return SolveBaseCase(nodes, edges, partition);
   }
 
+  std::cout << "[D&C+DP] Splitting partition of " << partSize << " nodes" << std::endl;
+
   auto [leftPartition, rightPartition] = SplitPartition(partition, nodes);
+
+  std::cout << "[D&C+DP] Left: " << leftPartition.nodeIndices.size()
+            << " nodes, Right: " << rightPartition.nodeIndices.size()
+            << " nodes" << std::endl;
 
   if (leftPartition.nodeIndices.empty()) {
     return SolveDP(nodes, edges, rightPartition);
@@ -286,7 +295,11 @@ CPUMove DnCDPSolver::SolvePartition(std::vector<Node> &nodes,
   CPUMove leftMove = SolveDP(nodes, edges, leftPartition);
   CPUMove rightMove = SolveDP(nodes, edges, rightPartition);
 
+  std::cout << "[D&C+DP] Left reduction: " << leftMove.intersection_reduction
+            << ", Right reduction: " << rightMove.intersection_reduction << std::endl;
+
   if (!leftMove.isValid() && !rightMove.isValid()) {
+    std::cout << "[D&C+DP] Both partitions stuck, trying full partition DP" << std::endl;
     return SolveDP(nodes, edges, partition);
   }
 
