@@ -341,4 +341,44 @@ void DnCDPSolver::BoundaryRefinement(std::vector<Node> &nodes,
   }
 }
 
+CPUMove DnCDPSolver::FindBestMove(std::vector<Node> nodes,
+                                   const std::vector<Edge> &edges) {
+  auto start_time = std::chrono::steady_clock::now();
+  lastCandidatesEvaluated_ = 0;
+
+  int current_intersections = CountIntersections(nodes, edges);
+
+  if (current_intersections == 0) {
+    CPUMove move;
+    move.intersections_before = 0;
+    return move;
+  }
+
+  std::vector<int> allIndices;
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    allIndices.push_back(static_cast<int>(i));
+  }
+
+  Partition fullPartition = CreatePartition(allIndices, nodes);
+  CPUMove best_move = SolvePartition(nodes, edges, fullPartition);
+  best_move.intersections_before = current_intersections;
+
+  auto end_time = std::chrono::steady_clock::now();
+  best_move.computation_time_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_time -
+                                                            start_time)
+          .count();
+
+  if (best_move.isValid()) {
+    std::cout << "[D&C+DP] Found move: Node " << best_move.node_id << " -> ("
+              << best_move.to_position.x << ", " << best_move.to_position.y
+              << ") reduction=" << best_move.intersection_reduction
+              << " time=" << best_move.computation_time_ms << "ms" << std::endl;
+  } else {
+    std::cout << "[D&C+DP] No improving move found" << std::endl;
+  }
+
+  return best_move;
+}
+
 }
