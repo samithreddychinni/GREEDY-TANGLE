@@ -299,4 +299,46 @@ CPUMove DnCDPSolver::SolvePartition(std::vector<Node> &nodes,
   return rightMove;
 }
 
+void DnCDPSolver::BoundaryRefinement(std::vector<Node> &nodes,
+                                      const std::vector<Edge> &edges,
+                                      float splitX) {
+  std::vector<int> boundaryNodes;
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    if (std::abs(nodes[i].position.x - splitX) < BOUNDARY_MARGIN) {
+      boundaryNodes.push_back(static_cast<int>(i));
+    }
+  }
+
+  if (boundaryNodes.empty()) return;
+
+  int currentCount = CountIntersections(nodes, edges);
+
+  for (int nodeIdx : boundaryNodes) {
+    Vec2 original = nodes[nodeIdx].position;
+    int bestCost = currentCount;
+    Vec2 bestPos = original;
+
+    float startX = std::max(MARGIN, splitX - BOUNDARY_MARGIN);
+    float endX = std::min(WINDOW_WIDTH - MARGIN, splitX + BOUNDARY_MARGIN);
+    float step = 30.0f;
+
+    for (float x = startX; x <= endX; x += step) {
+      for (float y = MARGIN; y <= WINDOW_HEIGHT - MARGIN; y += step) {
+        ++lastCandidatesEvaluated_;
+        nodes[nodeIdx].position = Vec2(x, y);
+        int cost = CountIntersections(nodes, edges);
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestPos = Vec2(x, y);
+        }
+      }
+    }
+
+    nodes[nodeIdx].position = (bestCost < currentCount) ? bestPos : original;
+    if (bestCost < currentCount) {
+      currentCount = bestCost;
+    }
+  }
+}
+
 }
