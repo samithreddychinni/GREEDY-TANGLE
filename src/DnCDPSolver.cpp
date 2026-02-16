@@ -267,4 +267,36 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
   return move;
 }
 
+CPUMove DnCDPSolver::SolvePartition(std::vector<Node> &nodes,
+                                     const std::vector<Edge> &edges,
+                                     const Partition &partition) {
+  if (static_cast<int>(partition.nodeIndices.size()) <= BASE_CASE_THRESHOLD) {
+    return SolveBaseCase(nodes, edges, partition);
+  }
+
+  auto [leftPartition, rightPartition] = SplitPartition(partition, nodes);
+
+  if (leftPartition.nodeIndices.empty()) {
+    return SolveDP(nodes, edges, rightPartition);
+  }
+  if (rightPartition.nodeIndices.empty()) {
+    return SolveDP(nodes, edges, leftPartition);
+  }
+
+  CPUMove leftMove = SolveDP(nodes, edges, leftPartition);
+  CPUMove rightMove = SolveDP(nodes, edges, rightPartition);
+
+  if (!leftMove.isValid() && !rightMove.isValid()) {
+    return SolveDP(nodes, edges, partition);
+  }
+
+  if (!rightMove.isValid()) return leftMove;
+  if (!leftMove.isValid()) return rightMove;
+
+  if (leftMove.intersection_reduction >= rightMove.intersection_reduction) {
+    return leftMove;
+  }
+  return rightMove;
+}
+
 }
