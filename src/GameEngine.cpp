@@ -1342,7 +1342,7 @@ void GameEngine::UpdateCPURace() {
 
     cpuFuture_ =
         std::async(std::launch::async, [this, nodes_copy, edges_copy]() {
-          return cpuController_->FindBestMove(nodes_copy, edges_copy);
+          return currentSolver_->FindBestMove(nodes_copy, edges_copy);
         });
   }
 }
@@ -1445,7 +1445,7 @@ void GameEngine::UpdateAutoSolve() {
   }
 
   // Find and start next move
-  CPUMove move = cpuController_->FindBestMove(nodes, edges);
+  CPUMove move = currentSolver_->FindBestMove(nodes, edges);
   if (move.isValid()) {
     autoSolveCurrentMove_ = move;
     autoSolveAnimating_ = true;
