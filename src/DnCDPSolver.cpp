@@ -145,4 +145,25 @@ std::vector<Vec2> DnCDPSolver::GenerateDPCandidates(const Partition &partition) 
   return candidates;
 }
 
+std::vector<int> DnCDPSolver::OrderNodesByDegree(
+    const std::vector<int> &nodeIndices,
+    const std::vector<Node> &nodes) {
+
+  std::vector<std::pair<int, int>> degreeList;
+  for (int idx : nodeIndices) {
+    int degree = static_cast<int>(nodes[idx].adjacencyList.size());
+    degreeList.emplace_back(degree, idx);
+  }
+
+  std::sort(degreeList.begin(), degreeList.end(),
+            [](const auto &a, const auto &b) { return a.first > b.first; });
+
+  std::vector<int> ordered;
+  for (const auto &p : degreeList) {
+    ordered.push_back(p.second);
+  }
+
+  return ordered;
+}
+
 }
