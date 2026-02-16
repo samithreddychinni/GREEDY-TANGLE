@@ -58,4 +58,25 @@ DnCDPSolver::SplitPartition(const Partition &partition,
   return {left, right};
 }
 
+std::vector<Edge> DnCDPSolver::GetRelevantEdges(
+    const std::vector<int> &nodeIndices,
+    const std::vector<Edge> &edges) {
+
+  std::vector<bool> inPartition(1000, false);
+  for (int idx : nodeIndices) {
+    if (idx >= 0 && idx < 1000) {
+      inPartition[idx] = true;
+    }
+  }
+
+  std::vector<Edge> relevant;
+  for (const Edge &e : edges) {
+    if (inPartition[e.u_id] || inPartition[e.v_id]) {
+      relevant.push_back(e);
+    }
+  }
+
+  return relevant;
+}
+
 }
