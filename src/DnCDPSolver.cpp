@@ -1,3 +1,19 @@
+/**
+ * DnCDPSolver.cpp
+ *
+ * Implements a hybrid Divide & Conquer + Dynamic Programming solver for the tangle puzzle.
+ *
+ * Algorithm Overview:
+ * 1. Divide: Spatially partition the graph into left/right subsets based on x-coordinate.
+ * 2. Conquer (DP): For each partition:
+ *    - Order nodes by degree (most constrained first).
+ *    - Define a grid of candidate positions.
+ *    - Use DP to find the optimal sequence of positions for nodes to minimize local intersections.
+ *      dp[i][pos] = min_intersections(node i at pos, optimal placement of 0..i-1)
+ * 3. Combine: Merge partitions and perform a boundary refinement pass to fix edge-crossing artifacts.
+ * 4. Fallback: If D&C stuck, use Greedy solver to escape local minima.
+ */
+
 #include "DnCDPSolver.hpp"
 #include "GreedySolver.hpp"
 #include "MathUtils.hpp"
