@@ -992,6 +992,13 @@ void GameEngine::SetDifficulty(Difficulty diff) {
 }
 
 void GameEngine::SetGameMode(GameMode mode) {
+  // Wait for any pending CPU task to finish before destroying the solver
+  if (cpuSolving_ && cpuFuture_.valid()) {
+    std::cout << "[Game] Waiting for pending CPU move to finish before switching mode..." << std::endl;
+    cpuFuture_.wait();
+    cpuSolving_ = false;
+  }
+
   currentMode = mode;
 
   currentSolver_ = CreateSolver(static_cast<SolverMode>(mode));
@@ -1001,6 +1008,7 @@ void GameEngine::SetGameMode(GameMode mode) {
     menuBar->SetItemChecked(1, 1, mode == GameMode::DIVIDE_AND_CONQUER_DP);
   }
 
+  // Restart game to apply new mode from scratch
   StartNewGame();
 }
 
