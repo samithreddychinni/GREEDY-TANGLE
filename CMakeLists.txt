@@ -38,6 +38,8 @@ set(SOURCES
     src/MathUtils.cpp
     src/MenuBar.cpp
     src/CPUController.cpp
+    src/GreedySolver.cpp
+    src/SolverFactory.cpp
 )
 
 # Executable
