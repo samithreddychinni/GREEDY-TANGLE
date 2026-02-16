@@ -902,11 +902,13 @@ void GameEngine::SetupMenus() {
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
 
-  // Mode menu
   std::vector<MenuItem> modeMenu = {
       MenuItem(
           "Greedy", [this]() { SetGameMode(GameMode::GREEDY); }, true,
-          currentMode == GameMode::GREEDY)};
+          currentMode == GameMode::GREEDY),
+      MenuItem(
+          "D&C + DP", [this]() { SetGameMode(GameMode::DIVIDE_AND_CONQUER_DP); }, true,
+          currentMode == GameMode::DIVIDE_AND_CONQUER_DP)};
   menuBar->AddMenu("Mode", modeMenu);
 
   // Settings menu - Node counts: 10, 15, 20, Custom (max 200)
@@ -992,10 +994,11 @@ void GameEngine::SetDifficulty(Difficulty diff) {
 void GameEngine::SetGameMode(GameMode mode) {
   currentMode = mode;
 
+  currentSolver_ = CreateSolver(static_cast<SolverMode>(mode));
+
   if (menuBar) {
-    // Mode menu is at index 1
-    // Greedy is item 0
     menuBar->SetItemChecked(1, 0, mode == GameMode::GREEDY);
+    menuBar->SetItemChecked(1, 1, mode == GameMode::DIVIDE_AND_CONQUER_DP);
   }
 
   StartNewGame();
