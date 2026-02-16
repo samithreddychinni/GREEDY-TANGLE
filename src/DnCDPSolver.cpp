@@ -166,4 +166,16 @@ std::vector<int> DnCDPSolver::OrderNodesByDegree(
   return ordered;
 }
 
+int DnCDPSolver::EvaluatePlacement(std::vector<Node> &nodes,
+                                    const std::vector<Edge> &edges,
+                                    int nodeIndex, Vec2 position) {
+  Vec2 original = nodes[nodeIndex].position;
+  nodes[nodeIndex].position = position;
+
+  int intersections = CountIntersections(nodes, edges);
+
+  nodes[nodeIndex].position = original;
+  return intersections;
+}
+
 }
