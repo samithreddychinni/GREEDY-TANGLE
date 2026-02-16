@@ -233,7 +233,6 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
     }
   }
 
-  int bestCost = dp[numNodes - 1][bestJ];
 
   std::vector<int> tracedPositions(numNodes);
   tracedPositions[numNodes - 1] = bestJ;
