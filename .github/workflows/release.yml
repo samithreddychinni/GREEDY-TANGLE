@@ -44,6 +44,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: lukka/run-vcpkg@v11
         with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b489dd118bd303d2dd76a'
           vcpkgJsonGlob: 'vcpkg.json'
 
       - name: Configure CMake

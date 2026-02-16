@@ -1,7 +1,6 @@
 {
     "name": "greedy-tangle",
     "version-string": "0.2.0",
-    "builtin-baseline": "9e5c707d7272827725227d8170889270df8276f5",
     "dependencies": [
         "sdl2",
         "sdl2-ttf"
