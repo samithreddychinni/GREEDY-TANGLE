@@ -1387,7 +1387,7 @@ void GameEngine::RenderScoreboard() {
   }
 
   // Scoreboard background
-  int scoreW = 280;
+  int scoreW = 450;
   int scoreH = 40;
   int scoreX = (WINDOW_WIDTH - scoreW) / 2;
   int scoreY = WINDOW_HEIGHT - scoreH - 10;
@@ -1412,12 +1412,13 @@ void GameEngine::RenderScoreboard() {
 
   // Render score text with move counts
   if (menuBar) {
+    std::string solverName = currentSolver_ ? currentSolver_->GetName() : "CPU";
     std::string cpuStatus =
         cpuFinished_
-            ? "CPU: " + std::to_string(cpuMoveCount_) + " moves"
-            : "CPU: " + std::to_string(cpuIntersectionCount_) + " left";
+            ? solverName + ": " + std::to_string(cpuMoveCount_) + " moves"
+            : solverName + ": " + std::to_string(cpuIntersectionCount_) + " left";
     std::string scoreText =
-        "H: " + std::to_string(intersectionCount) + " left  |  " + cpuStatus;
+        "Human: " + std::to_string(intersectionCount) + " left  |  " + cpuStatus;
     menuBar->RenderTextCentered(scoreText, scoreRect, {255, 255, 255, 255});
   }
 }
