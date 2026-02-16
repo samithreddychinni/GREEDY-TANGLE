@@ -215,7 +215,7 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
   int currentTotal = CountIntersections(nodes, edges);
 
   int firstNode = ordered[0];
-  Vec2 firstOriginal = nodes[firstNode].position;
+  // Vec2 firstOriginal = nodes[firstNode].position; // Unused
   for (int j = 0; j < numCandidates; ++j) {
     ++lastCandidatesEvaluated_;
     dp[0][j] = EvaluatePlacement(nodes, edges, firstNode, candidates[j]);

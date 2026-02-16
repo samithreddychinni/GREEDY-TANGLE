@@ -11,7 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 
-#define _USE_MATH_DEFINES
+
 
 namespace GreedyTangle {
 
@@ -504,7 +504,7 @@ void GameEngine::GenerateEasyGraph(int nodeCount) {
   std::mt19937 gen(rd());
   int numChords = 2 + (nodeCount > 10 ? 1 : 0); // 2 or 3 chords
 
-  auto edgesCrossOnCircle = [nodeCount](int a, int b, int c, int d) -> bool {
+  auto edgesCrossOnCircle = [](int a, int b, int c, int d) -> bool {
     if (a > b)
       std::swap(a, b);
     if (c > d)

@@ -31,6 +31,12 @@ include_directories(
     ${SDL2_TTF_INCLUDE_DIR}
 )
 
+# Link directories (Crucial for macOS/Homebrew where libs are not in standard /usr/lib)
+link_directories(
+    ${SDL2_LIBRARY_DIRS}
+    ${SDL2_TTF_LIBRARY_DIRS}
+)
+
 # Source files
 set(SOURCES
     src/main.cpp

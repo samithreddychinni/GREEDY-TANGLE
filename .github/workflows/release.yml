@@ -29,20 +29,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- LINUX ---
       - name: Install Deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev libsdl2-ttf-dev ninja-build
 
-      # --- MACOS ---
       - name: Install Deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install sdl2 sdl2_ttf ninja
 
-      # --- WINDOWS ---
       - name: Setup vcpkg (Windows)
         if: runner.os == 'Windows'
         uses: lukka/run-vcpkg@v11
@@ -50,15 +47,12 @@ jobs:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: 'vcpkg.json'
 
-      # --- CONFIGURE ---
       - name: Configure CMake
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -GNinja
 
-      # --- BUILD ---
       - name: Build
         run: cmake --build build --config Release
 
-      # --- PACKAGE ---
       - name: Package (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
@@ -71,7 +65,6 @@ jobs:
           cd build
           7z a ../${{ matrix.asset_name }} GreedyTangle.exe *.dll
 
-      # --- UPLOAD ---
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
