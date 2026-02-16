@@ -44,7 +44,7 @@ void GameEngine::Init() {
   // Initialize menu bar
   menuBar = std::make_unique<MenuBar>();
   if (!menuBar->Init(renderer)) {
-    std::cerr << "[GameEngine] MenuBar init failed, continuing without menu"
+    std::cerr << "[Game] MenuBar init failed, continuing without menu"
               << std::endl;
     menuBar.reset();
   } else {
@@ -56,7 +56,7 @@ void GameEngine::Init() {
   currentSolver_ = CreateSolver(static_cast<SolverMode>(currentMode));
   cpuReplayLogger_ = std::make_unique<ReplayLogger>();
 
-  std::cout << "[GameEngine] Initialized successfully" << std::endl;
+  std::cout << "[Game] Initialized successfully" << std::endl;
 }
 
 void GameEngine::Run() {
@@ -80,7 +80,7 @@ void GameEngine::Cleanup() {
     window = nullptr;
   }
   SDL_Quit();
-  std::cout << "[GameEngine] Cleanup complete" << std::endl;
+  std::cout << "[Game] Cleanup complete" << std::endl;
 }
 
 void GameEngine::HandleInput() {
@@ -435,7 +435,7 @@ void GameEngine::GenerateRandomGraph(int nodeCount) {
     ++attempts;
   }
 
-  std::cout << "[GameEngine] Generated random graph: " << nodes.size()
+  std::cout << "[Game] Generated random graph: " << nodes.size()
             << " nodes, " << edges.size() << " edges" << std::endl;
 }
 
@@ -461,7 +461,7 @@ void GameEngine::GenerateTestGraph() {
   AddEdge(4, 2);
   AddEdge(4, 3);
 
-  std::cout << "[GameEngine] Generated test graph: " << nodes.size()
+  std::cout << "[Game] Generated test graph: " << nodes.size()
             << " nodes, " << edges.size() << " edges" << std::endl;
 }
 
@@ -560,7 +560,7 @@ void GameEngine::GenerateEasyGraph(int nodeCount) {
   currentPhase = GamePhase::SHOWING_UNTANGLED;
   phaseStartTime = std::chrono::steady_clock::now();
 
-  std::cout << "[GameEngine] Easy graph: " << nodes.size() << " nodes, "
+  std::cout << "[Game] Easy graph: " << nodes.size() << " nodes, "
             << edges.size() << " edges (cycle + " << added << " chords)"
             << std::endl;
 }
@@ -653,7 +653,7 @@ void GameEngine::GenerateMediumGraph(int nodeCount) {
   currentPhase = GamePhase::SHOWING_UNTANGLED;
   phaseStartTime = std::chrono::steady_clock::now();
 
-  std::cout << "[GameEngine] Medium graph: " << nodes.size() << " nodes, "
+  std::cout << "[Game] Medium graph: " << nodes.size() << " nodes, "
             << edges.size() << " edges (grid mesh)" << std::endl;
 }
 
@@ -737,7 +737,7 @@ void GameEngine::GenerateHardGraph(int nodeCount) {
   currentPhase = GamePhase::SHOWING_UNTANGLED;
   phaseStartTime = std::chrono::steady_clock::now();
 
-  std::cout << "[GameEngine] Hard graph: " << nodes.size() << " nodes, "
+  std::cout << "[Game] Hard graph: " << nodes.size() << " nodes, "
             << edges.size() << " edges (triangulation)" << std::endl;
 }
 
@@ -833,7 +833,7 @@ void GameEngine::UpdatePhase() {
       currentPhase = GamePhase::TANGLING;
       phaseStartTime = now;
       animationProgress = 0.0f;
-      std::cout << "[GameEngine] Starting tangle animation..." << std::endl;
+      std::cout << "[Game] Starting tangle animation..." << std::endl;
     }
     break;
 
@@ -848,7 +848,7 @@ void GameEngine::UpdatePhase() {
       // Start CPU race mode
       StartCPURace();
 
-      std::cout << "[GameEngine] Race started! Untangle the graph."
+      std::cout << "[Game] Race started! Untangle the graph."
                 << std::endl;
     }
 
@@ -877,7 +877,7 @@ void GameEngine::UpdatePhase() {
       if (currentBlink >= TOTAL_BLINKS * 2) {
         // Blinks complete, show victory screen
         currentPhase = GamePhase::VICTORY;
-        std::cout << "[GameEngine] Victory! Showing analytics." << std::endl;
+        std::cout << "[Game] Victory! Showing analytics." << std::endl;
       }
     }
     break;
@@ -1036,7 +1036,7 @@ void GameEngine::CheckVictory() {
     blinkCount = 0;
     currentPhase = GamePhase::VICTORY_BLINK;
 
-    std::cout << "[GameEngine] Congratulations! Graph untangled in "
+    std::cout << "[Game] Congratulations! Graph untangled in "
               << gameDuration << "s with " << moveCount << " moves!"
               << std::endl;
   }
@@ -1238,7 +1238,7 @@ void GameEngine::StartCPURace() {
   // Initialize replay logger with initial state
   cpuReplayLogger_->StartMatch(cpuNodes_, edges, cpuIntersectionCount_);
 
-  std::cout << "[Race] Starting race mode! H: " << intersectionCount
+  std::cout << "[Game] Starting race mode! H: " << intersectionCount
             << " | CPU: " << cpuIntersectionCount_ << std::endl;
 
   // Note: Don't call StartNextCPUMove() immediately - let the delay timer work
@@ -1255,7 +1255,7 @@ void GameEngine::StartNextCPUMove() {
     cpuFinished_ = true;
     if (winner_.empty()) {
       winner_ = "cpu";
-      std::cout << "[Race] CPU WINS! Solved in " << cpuMoveCount_ << " moves."
+      std::cout << "[Game] CPU WINS! Solved in " << cpuMoveCount_ << " moves."
                 << std::endl;
     }
     return;
