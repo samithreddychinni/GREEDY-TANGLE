@@ -120,4 +120,29 @@ CPUMove DnCDPSolver::SolveBaseCase(std::vector<Node> &nodes,
   return best_move;
 }
 
+std::vector<Vec2> DnCDPSolver::GenerateDPCandidates(const Partition &partition) {
+  std::vector<Vec2> candidates;
+
+  float pxMin = std::max(MARGIN, partition.xMin - 50.0f);
+  float pxMax = std::min(WINDOW_WIDTH - MARGIN, partition.xMax + 50.0f);
+  float pyMin = std::max(MARGIN, partition.yMin - 50.0f);
+  float pyMax = std::min(WINDOW_HEIGHT - MARGIN, partition.yMax + 50.0f);
+
+  float spanX = pxMax - pxMin;
+  float spanY = pyMax - pyMin;
+  float step = std::max(40.0f, std::min(spanX, spanY) / 8.0f);
+
+  for (float x = pxMin; x <= pxMax; x += step) {
+    for (float y = pyMin; y <= pyMax; y += step) {
+      candidates.emplace_back(x, y);
+    }
+  }
+
+  float cx = (pxMin + pxMax) / 2.0f;
+  float cy = (pyMin + pyMax) / 2.0f;
+  candidates.emplace_back(cx, cy);
+
+  return candidates;
+}
+
 }
