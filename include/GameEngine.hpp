@@ -49,7 +49,8 @@ public:
     TANGLING,          // Animate nodes to tangled positions
     PLAYING,           // Human plays, CPU solves in background (RACE MODE)
     VICTORY_BLINK,     // Flash animation on win
-    VICTORY            // Show analytics screen
+    VICTORY,           // Show analytics screen
+    GAME_ENDED         // Player ended game early - "You Lost"
   };
 
   // Difficulty levels
@@ -130,6 +131,7 @@ private:
       0;                     // CPU's current intersections (live scoreboard)
   bool cpuSolving_ = false;  // Is CPU currently thinking?
   bool cpuFinished_ = false; // Has CPU solved?
+  bool cpuPaused_ = false;   // Is CPU paused by user?
   std::string winner_ = "";  // "human" or "cpu"
 
   // CPU delay based on difficulty (makes CPU beatable on easier levels)
@@ -230,6 +232,10 @@ public:
   void SetDifficulty(Difficulty diff);
   void SetGameMode(GameMode mode);
 
+  // In-game actions
+  void EndGame();         // Stop CPU, show "Game Ended - You Lost"
+  void TogglePauseCPU();  // Pause/resume CPU solving
+
 private:
   /**
    * Process SDL_Event queue
@@ -295,6 +301,9 @@ private:
   // Auto-solve feature
   void StartAutoSolve();  // Forfeit and show CPU solving human's graph
   void UpdateAutoSolve(); // Animate auto-solve moves
+
+  // End Game / Pause CPU
+  void RenderGameEndedScreen(); // Draw "Game Ended - You Lost" overlay
 };
 
 } // namespace GreedyTangle

@@ -142,6 +142,31 @@ void GameEngine::HandleInput() {
         Vec2 clickPos(static_cast<float>(event.button.x),
                       static_cast<float>(event.button.y));
 
+        // Check in-game buttons during PLAYING phase
+        if (currentPhase == GamePhase::PLAYING) {
+          int winW, winH;
+          SDL_GetWindowSize(window, &winW, &winH);
+          int scoreW = 450;
+          int scoreX = (winW - scoreW) / 2;
+          int scoreY = winH - 40 - 10;
+          int btnY = scoreY - 35; // Buttons above scoreboard
+
+          // End Game button (above scoreboard, left)
+          SDL_Rect endGameBtn = {scoreX, btnY, 120, 30};
+          SDL_Point clickPt = {event.button.x, event.button.y};
+          if (SDL_PointInRect(&clickPt, &endGameBtn)) {
+            EndGame();
+            break;
+          }
+
+          // Pause/Continue button (above scoreboard, right)
+          SDL_Rect pauseBtn = {scoreX + scoreW - 140, btnY, 140, 30};
+          if (SDL_PointInRect(&clickPt, &pauseBtn)) {
+            TogglePauseCPU();
+            break;
+          }
+        }
+
         int nodeId = GetNodeAtPosition(clickPos);
         if (nodeId != -1) {
           selectedNodeID = nodeId;
@@ -321,6 +346,11 @@ void GameEngine::Render() {
   // Render victory screen overlay
   if (currentPhase == GamePhase::VICTORY) {
     RenderVictoryScreen();
+  }
+
+  // Render game ended overlay
+  if (currentPhase == GamePhase::GAME_ENDED) {
+    RenderGameEndedScreen();
   }
 
   // Render menu bar on top
@@ -934,6 +964,10 @@ void GameEngine::UpdatePhase() {
   case GamePhase::VICTORY:
     // Stay on victory screen until player starts new game
     break;
+
+  case GamePhase::GAME_ENDED:
+    // Stay on game ended screen until player starts new game
+    break;
   }
 }
 
@@ -1302,6 +1336,7 @@ void GameEngine::StartCPURace() {
   cpuIntersectionCount_ = intersectionCount;
   cpuSolving_ = false;
   cpuFinished_ = false;
+  cpuPaused_ = false;
   cpuMoveCount_ = 0;
   cpuGameDuration_ = 0.0f;
   winner_ = "";
@@ -1379,6 +1414,11 @@ float GameEngine::GetCPUDelay() const {
 void GameEngine::UpdateCPURace() {
   // Only active during PLAYING phase
   if (currentPhase != GamePhase::PLAYING) {
+    return;
+  }
+
+  // Skip if CPU is paused by user
+  if (cpuPaused_) {
     return;
   }
 
@@ -1478,11 +1518,13 @@ void GameEngine::RenderScoreboard() {
     return;
   }
 
-  // Scoreboard background
+  // Scoreboard background - use runtime window size
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
   int scoreW = 450;
   int scoreH = 40;
-  int scoreX = (WINDOW_WIDTH - scoreW) / 2;
-  int scoreY = WINDOW_HEIGHT - scoreH - 10;
+  int scoreX = (winW - scoreW) / 2;
+  int scoreY = winH - scoreH - 10;
 
   SDL_SetRenderDrawColor(renderer, 30, 30, 35, 220);
   SDL_Rect scoreRect = {scoreX, scoreY, scoreW, scoreH};
@@ -1514,6 +1556,157 @@ void GameEngine::RenderScoreboard() {
     std::string scoreText =
         "Human: " + std::to_string(intersectionCount) + " left  |  " + cpuStatus;
     menuBar->RenderTextCentered(scoreText, scoreRect, {255, 255, 255, 255});
+  }
+
+  // === End Game and Pause/Continue buttons above scoreboard ===
+  int btnY = scoreY - 35;
+
+  // End Game button (left)
+  SDL_Rect endGameBtn = {scoreX, btnY, 120, 30};
+  SDL_SetRenderDrawColor(renderer, 180, 40, 40, 255); // Red
+  SDL_RenderFillRect(renderer, &endGameBtn);
+  SDL_SetRenderDrawColor(renderer, 220, 80, 80, 255);
+  SDL_RenderDrawRect(renderer, &endGameBtn);
+  if (menuBar) {
+    menuBar->RenderTextCentered("End Game", endGameBtn, {255, 255, 255, 255});
+  }
+
+  // Pause / Continue button (right)
+  SDL_Rect pauseBtn = {scoreX + scoreW - 140, btnY, 140, 30};
+  if (cpuPaused_) {
+    SDL_SetRenderDrawColor(renderer, 40, 160, 80, 255); // Green when paused
+    SDL_RenderFillRect(renderer, &pauseBtn);
+    SDL_SetRenderDrawColor(renderer, 80, 200, 120, 255);
+    SDL_RenderDrawRect(renderer, &pauseBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Continue", pauseBtn, {255, 255, 255, 255});
+    }
+  } else {
+    SDL_SetRenderDrawColor(renderer, 40, 100, 180, 255); // Blue when active
+    SDL_RenderFillRect(renderer, &pauseBtn);
+    SDL_SetRenderDrawColor(renderer, 80, 140, 220, 255);
+    SDL_RenderDrawRect(renderer, &pauseBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Pause CPU", pauseBtn, {255, 255, 255, 255});
+    }
+  }
+}
+
+// ============== END GAME / PAUSE CPU ==============
+
+void GameEngine::EndGame() {
+  if (currentPhase != GamePhase::PLAYING) {
+    return;
+  }
+
+  // Wait for any in-flight CPU async task
+  if (cpuSolving_ && cpuFuture_.valid()) {
+    cpuFuture_.wait();
+  }
+
+  cpuSolving_ = false;
+  cpuFinished_ = true;
+  cpuPaused_ = false;
+  autoSolveActive_ = false;
+
+  // Record player time
+  auto now = std::chrono::steady_clock::now();
+  gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
+
+  currentPhase = GamePhase::GAME_ENDED;
+  std::cout << "[Game] Game ended by player. You lost!" << std::endl;
+}
+
+void GameEngine::TogglePauseCPU() {
+  if (currentPhase != GamePhase::PLAYING) {
+    return;
+  }
+
+  cpuPaused_ = !cpuPaused_;
+
+  if (cpuPaused_) {
+    std::cout << "[Game] CPU paused." << std::endl;
+  } else {
+    // Reset delay timer so CPU resumes cleanly
+    cpuLastMoveTime_ = std::chrono::steady_clock::now();
+    std::cout << "[Game] CPU resumed." << std::endl;
+  }
+}
+
+void GameEngine::RenderGameEndedScreen() {
+  // Semi-transparent dark overlay
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(renderer, 0, 0, 0, 200);
+  SDL_Rect overlay = {0, 0, winW, winH};
+  SDL_RenderFillRect(renderer, &overlay);
+
+  // Panel
+  int panelW = 400;
+  int panelH = 260;
+  int panelX = (winW - panelW) / 2;
+  int panelY = (winH - panelH) / 2;
+
+  SDL_SetRenderDrawColor(renderer, 45, 45, 50, 255);
+  SDL_Rect panel = {panelX, panelY, panelW, panelH};
+  SDL_RenderFillRect(renderer, &panel);
+
+  // Red border for loss
+  SDL_SetRenderDrawColor(renderer, 220, 50, 50, 255);
+  SDL_RenderDrawRect(renderer, &panel);
+
+  int textY = panelY + 25;
+  int lineHeight = 40;
+  int boxHeight = 32;
+
+  // Title bar - red "GAME ENDED"
+  SDL_SetRenderDrawColor(renderer, 220, 50, 50, 255);
+  SDL_Rect titleBar = {panelX + 20, textY, panelW - 40, boxHeight};
+  SDL_RenderFillRect(renderer, &titleBar);
+  if (menuBar) {
+    menuBar->RenderTextCentered("GAME ENDED", titleBar, {255, 255, 255, 255});
+  }
+
+  textY += lineHeight + 10;
+
+  // "You Lost!" subtitle
+  SDL_Rect lostRect = {panelX + 20, textY, panelW - 40, boxHeight};
+  if (menuBar) {
+    menuBar->RenderTextCentered("You Lost!", lostRect, {220, 80, 80, 255});
+  }
+
+  textY += lineHeight + 5;
+
+  // Stats helper
+  auto drawStat = [&](int y, SDL_Color color, const std::string &text) {
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_Rect box = {panelX + 30, y, panelW - 60, boxHeight};
+    SDL_RenderDrawRect(renderer, &box);
+    if (menuBar) {
+      menuBar->RenderTextCentered(text, box, color);
+    }
+  };
+
+  // Time
+  std::ostringstream timeStr;
+  timeStr << "Time: " << std::fixed << std::setprecision(2) << gameDuration << "s";
+  drawStat(textY, {100, 180, 255, 255}, timeStr.str());
+  textY += lineHeight;
+
+  // Moves
+  drawStat(textY, {255, 180, 100, 255}, "Moves: " + std::to_string(moveCount));
+  textY += lineHeight + 10;
+
+  // Hint
+  SDL_SetRenderDrawColor(renderer, 80, 80, 85, 255);
+  SDL_Rect hintBox = {panelX + 40, textY, panelW - 80, boxHeight};
+  SDL_RenderFillRect(renderer, &hintBox);
+  SDL_SetRenderDrawColor(renderer, 150, 150, 155, 255);
+  SDL_RenderDrawRect(renderer, &hintBox);
+  if (menuBar) {
+    menuBar->RenderTextCentered("Game > New Game to play again", hintBox,
+                                {180, 180, 185, 255});
   }
 }
 
