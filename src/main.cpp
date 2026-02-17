@@ -4,6 +4,8 @@
 #include <SDL2/SDL.h>
 
 int main(int argc, char* argv[]) {
+  (void)argc;
+  (void)argv;
   std::cout << "=== Greedy Tangle ===" << std::endl;
   std::cout << "A Competitive Graph Theory Puzzle" << std::endl;
   std::cout << "-----------------------------------" << std::endl;
@@ -20,8 +22,7 @@ int main(int argc, char* argv[]) {
     // Initialize SDL and create window
     engine.Init();
 
-    // Generate dynamic graph (starts untangled, then tangles)
-    engine.GenerateDynamicGraph(8);
+    // Initial graph generation is now handled by the Home Screen
 
     // Run main game loop
     engine.Run();

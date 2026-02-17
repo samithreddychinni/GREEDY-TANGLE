@@ -57,6 +57,30 @@ void GameEngine::Init() {
   cpuReplayLogger_ = std::make_unique<ReplayLogger>();
 
   std::cout << "[Game] Initialized successfully" << std::endl;
+
+  // Load UI Fonts
+  std::vector<std::string> fontPaths = {
+      "assets/fonts/Inter-Bold.ttf",
+      "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf",
+      "/usr/share/fonts/google-droid-sans-fonts/DroidSans-Bold.ttf",
+      "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "c:/windows/fonts/arialbd.ttf",
+      "/System/Library/Fonts/Helvetica.ttc",
+      "/Library/Fonts/Arial.ttf"};
+
+  for (const auto &path : fontPaths) {
+    titleFont = TTF_OpenFont(path.c_str(), 64);
+    if (titleFont) {
+      uiFont = TTF_OpenFont(path.c_str(), 24);
+      std::cout << "[Game] Loaded UI fonts from: " << path << std::endl;
+      break;
+    }
+  }
+
+  if (!titleFont) {
+    std::cerr << "[Game] Failed to load UI fonts!" << std::endl;
+  }
 }
 
 void GameEngine::Run() {
@@ -79,6 +103,15 @@ void GameEngine::Cleanup() {
     SDL_DestroyWindow(window);
     window = nullptr;
   }
+  if (titleFont) {
+    TTF_CloseFont(titleFont);
+    titleFont = nullptr;
+  }
+  if (uiFont) {
+    TTF_CloseFont(uiFont);
+    uiFont = nullptr;
+  }
+
   SDL_Quit();
   std::cout << "[Game] Cleanup complete" << std::endl;
 }
@@ -88,6 +121,14 @@ void GameEngine::HandleInput() {
   while (SDL_PollEvent(&event)) {
     // Let menu handle events first
     if (menuBar && menuBar->HandleEvent(event)) {
+      continue;
+    }
+
+    if (currentPhase == GamePhase::MAIN_MENU) {
+      if (event.type == SDL_QUIT) {
+        isRunning = false;
+      }
+      HandleHomeScreenInput(event);
       continue;
     }
 
@@ -262,6 +303,12 @@ void GameEngine::Render() {
                            Colors::BACKGROUND.b, Colors::BACKGROUND.a);
   }
   SDL_RenderClear(renderer);
+
+  if (currentPhase == GamePhase::MAIN_MENU) {
+    RenderHomeScreen();
+    SDL_RenderPresent(renderer);
+    return;
+  }
 
   for (const Edge &edge : edges) {
     DrawEdge(edge);
@@ -826,6 +873,8 @@ void GameEngine::UpdatePhase() {
   float elapsed = std::chrono::duration<float>(now - phaseStartTime).count();
 
   switch (currentPhase) {
+  case GamePhase::MAIN_MENU:
+    return;
   case GamePhase::SHOWING_UNTANGLED:
     if (elapsed >= UNTANGLED_DISPLAY_DURATION) {
       // Transition to tangling phase
@@ -974,7 +1023,9 @@ void GameEngine::SetNodeCount(int count) {
     // Custom option stays unchecked (non-checkable)
   }
 
-  StartNewGame();
+  if (currentPhase != GamePhase::MAIN_MENU) {
+    StartNewGame();
+  }
 }
 
 void GameEngine::SetDifficulty(Difficulty diff) {
@@ -988,7 +1039,9 @@ void GameEngine::SetDifficulty(Difficulty diff) {
     menuBar->SetItemChecked(2, 7, diff == Difficulty::HARD);
   }
 
-  StartNewGame();
+  if (currentPhase != GamePhase::MAIN_MENU) {
+    StartNewGame();
+  }
 }
 
 void GameEngine::SetGameMode(GameMode mode) {
@@ -1009,16 +1062,15 @@ void GameEngine::SetGameMode(GameMode mode) {
   }
 
   // Restart game to apply new mode from scratch
-  StartNewGame();
+  // Restart game to apply new mode from scratch
+  if (currentPhase != GamePhase::MAIN_MENU) {
+    StartNewGame();
+  }
 }
 
 void GameEngine::CheckVictory() {
   // Only check during gameplay
   if (currentPhase != GamePhase::PLAYING)
-    return;
-
-  // If CPU already won, don't give human a victory
-  if (winner_ == "cpu")
     return;
 
   // Victory when no intersections
@@ -1027,8 +1079,20 @@ void GameEngine::CheckVictory() {
     auto now = std::chrono::steady_clock::now();
     gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
 
-    if (winner_.empty()) {
+    // Determine winner based on lowest time
+    if (cpuFinished_ && cpuGameDuration_ > 0.0f) {
+      if (gameDuration < cpuGameDuration_) {
+        winner_ = "human";
+        std::cout << "[Game] YOU WIN! " << gameDuration << "s vs CPU "
+                  << cpuGameDuration_ << "s" << std::endl;
+      } else {
+        winner_ = "cpu";
+        std::cout << "[Game] CPU WINS! " << cpuGameDuration_ << "s vs YOU "
+                  << gameDuration << "s" << std::endl;
+      }
+    } else {
       winner_ = "human";
+      std::cout << "[Game] YOU WIN! CPU didn't finish." << std::endl;
     }
 
     // Start victory blink animation
@@ -1105,10 +1169,19 @@ void GameEngine::RenderVictoryScreen() {
   // Format time string
   std::ostringstream timeStr;
   timeStr << "Time: " << std::fixed << std::setprecision(2) << gameDuration
-          << " seconds";
+          << "s";
+  if (cpuGameDuration_ > 0.0f) {
+    timeStr << " | CPU: " << cpuGameDuration_ << "s";
+  } else {
+    timeStr << " | CPU: --";
+  }
 
   // Format moves string
+  // Format moves string
   std::string movesStr = "Moves: " + std::to_string(moveCount);
+  if (cpuMoveCount_ > 0) {
+    movesStr += " | CPU: " + std::to_string(cpuMoveCount_);
+  }
 
   // Format nodes string
   std::string nodesStr = "Nodes: " + std::to_string(nodes.size());
@@ -1230,6 +1303,7 @@ void GameEngine::StartCPURace() {
   cpuSolving_ = false;
   cpuFinished_ = false;
   cpuMoveCount_ = 0;
+  cpuGameDuration_ = 0.0f;
   winner_ = "";
 
   // Initialize delay timer so first move also respects delay
@@ -1251,12 +1325,19 @@ void GameEngine::StartNextCPUMove() {
   }
 
   // Check if CPU already won
+  // Check if CPU already won
   if (cpuIntersectionCount_ == 0) {
-    cpuFinished_ = true;
-    if (winner_.empty()) {
-      winner_ = "cpu";
-      std::cout << "[Game] CPU WINS! Solved in " << cpuMoveCount_ << " moves."
-                << std::endl;
+    if (!cpuFinished_) {
+      cpuFinished_ = true;
+      auto now = std::chrono::steady_clock::now();
+      cpuGameDuration_ =
+          std::chrono::duration<float>(now - gameStartTime).count();
+
+      if (winner_.empty()) {
+        std::cout << "[Game] CPU finished in " << cpuMoveCount_ << " moves (" 
+                  << std::fixed << std::setprecision(2) << cpuGameDuration_ << "s)."
+                  << std::endl;
+      }
     }
     return;
   }
@@ -1309,20 +1390,29 @@ void GameEngine::UpdateCPURace() {
       // (This frame we'll process CPU, next frame check again)
     } else {
       // Both finished - compare move counts
-      if (moveCount < cpuMoveCount_) {
-        winner_ = "human";
-        std::cout << "[Game] HUMAN WINS! Human: " << moveCount
-                  << " moves vs CPU: " << cpuMoveCount_ << " moves"
-                  << std::endl;
-      } else if (cpuMoveCount_ < moveCount) {
-        winner_ = "cpu";
-        std::cout << "[Game] CPU WINS! CPU: " << cpuMoveCount_
-                  << " moves vs Human: " << moveCount << " moves" << std::endl;
+      // Both finished (or User finished and CPU strictly slower/still working)
+        
+      // Capture User time
+      auto now = std::chrono::steady_clock::now();
+      gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
+      
+      if (cpuFinished_) {
+          if (cpuGameDuration_ < gameDuration) {
+              winner_ = "cpu";
+              std::cout << "[Game] CPU WINS! Time: " << cpuGameDuration_ << "s vs " << gameDuration << "s" << std::endl;
+          } else {
+              winner_ = "human";
+              std::cout << "[Game] YOU WIN! Time: " << gameDuration << "s vs " << cpuGameDuration_ << "s" << std::endl;
+          }
       } else {
-        winner_ = "tie";
-        std::cout << "[Game] TIE! Both solved in " << moveCount << " moves"
-                  << std::endl;
+          winner_ = "human";
+           std::cout << "[Game] YOU WIN! CPU didn't finish." << std::endl;
       }
+      
+      // Trigger Victory Animation
+      victoryStartTime = now;
+      blinkCount = 0;
+      currentPhase = GamePhase::VICTORY_BLINK;
       return;
     }
   }
@@ -1355,16 +1445,10 @@ void GameEngine::UpdateCPURace() {
           std::cout << "[CPU] Solved in " << cpuMoveCount_ << " moves!"
                     << std::endl;
 
-          // CPU wins if human hasn't solved yet
+          // CPU finished - just mark it and log
           if (intersectionCount > 0 && winner_.empty()) {
-            winner_ = "cpu";
-            auto now = std::chrono::steady_clock::now();
-            gameDuration = std::chrono::duration<float>(now - gameStartTime).count();
-            victoryStartTime = now;
-            blinkCount = 0;
-            currentPhase = GamePhase::VICTORY_BLINK;
-            std::cout << "[Game] CPU WINS! Solved in " << cpuMoveCount_
-                      << " moves" << std::endl;
+             // Do not declare winner yet - let user play until they finish
+             std::cout << "[Game] CPU finished! Keep going to beat the time!" << std::endl;
           }
         }
       } else {
@@ -1423,8 +1507,10 @@ void GameEngine::RenderScoreboard() {
     std::string solverName = currentSolver_ ? currentSolver_->GetName() : "CPU";
     std::string cpuStatus =
         cpuFinished_
-            ? solverName + ": " + std::to_string(cpuMoveCount_) + " moves"
-            : solverName + ": " + std::to_string(cpuIntersectionCount_) + " left";
+            ? solverName + ": Solved (" + std::to_string(cpuMoveCount_) +
+                  " moves)"
+            : solverName + ": " + std::to_string(cpuIntersectionCount_) +
+                  " left";
     std::string scoreText =
         "Human: " + std::to_string(intersectionCount) + " left  |  " + cpuStatus;
     menuBar->RenderTextCentered(scoreText, scoreRect, {255, 255, 255, 255});
@@ -1501,6 +1587,173 @@ void GameEngine::UpdateAutoSolve() {
     // Stuck - can't solve further
     autoSolveActive_ = false;
     std::cout << "[AutoSolve] Stuck in local minimum." << std::endl;
+  }
+}
+
+// UI Helpers
+void GameEngine::DrawTextCentered(int x, int y, const std::string &text,
+                                  SDL_Color color, int fontSize) {
+  TTF_Font *font = (fontSize > 40) ? titleFont : uiFont;
+  if (!font)
+    return;
+
+  SDL_Surface *surf = TTF_RenderText_Blended(font, text.c_str(), color);
+  if (surf) {
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_Rect dst = {x - surf->w / 2, y - surf->h / 2, surf->w, surf->h};
+    SDL_RenderCopy(renderer, tex, NULL, &dst);
+    SDL_DestroyTexture(tex);
+    SDL_FreeSurface(surf);
+  }
+}
+
+void GameEngine::DrawButton(const SDL_Rect &rect, const std::string &text,
+                            bool isSelected, bool isHovered) {
+  SDL_Color bg;
+  if (isSelected) {
+    bg = {46, 204, 113, 255}; // Green
+  } else if (isHovered) {
+    bg = {52, 73, 94, 255}; // Dark Blue Hover
+  } else {
+    bg = {44, 62, 80, 255}; // Dark Blue
+  }
+
+  SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a);
+  SDL_RenderFillRect(renderer, &rect);
+
+  SDL_SetRenderDrawColor(renderer, 236, 240, 241, 255); // White border
+  SDL_RenderDrawRect(renderer, &rect);
+
+  DrawTextCentered(rect.x + rect.w / 2, rect.y + rect.h / 2, text,
+                   {236, 240, 241, 255}, 24);
+}
+
+void GameEngine::DrawSlider(const SDL_Rect &rect, int min, int max, int &value,
+                            const std::string &label) {
+  (void)rect; (void)min; (void)max; (void)value; (void)label;
+  // Not implemented, using buttons for now
+}
+
+void GameEngine::RenderHomeScreen() {
+  int w = WINDOW_WIDTH;
+  int cx = w / 2;
+
+  int mx, my;
+  SDL_GetMouseState(&mx, &my);
+  SDL_Point mousePt = {mx, my};
+
+  // Title
+  DrawTextCentered(cx, 100, "GREEDY TANGLE", {231, 76, 60, 255}, 64);
+
+  // Difficulty
+  DrawTextCentered(cx, 200, "DIFFICULTY", {189, 195, 199, 255}, 24);
+  SDL_Rect diffEasy = {cx - 190, 240, 120, 50};
+  SDL_Rect diffMed = {cx - 60, 240, 120, 50};
+  SDL_Rect diffHard = {cx + 70, 240, 120, 50};
+
+  DrawButton(diffEasy, "EASY", currentDifficulty == Difficulty::EASY,
+             SDL_PointInRect(&mousePt, &diffEasy));
+  DrawButton(diffMed, "MEDIUM", currentDifficulty == Difficulty::MEDIUM,
+             SDL_PointInRect(&mousePt, &diffMed));
+  DrawButton(diffHard, "HARD", currentDifficulty == Difficulty::HARD,
+             SDL_PointInRect(&mousePt, &diffHard));
+
+  // Mode
+  DrawTextCentered(cx, 330, "SOLVER MODE", {189, 195, 199, 255}, 24);
+  SDL_Rect modeGreedy = {cx - 160, 370, 150, 50};
+  SDL_Rect modeHybrid = {cx + 10, 370, 150, 50};
+
+  DrawButton(modeGreedy, "GREEDY", currentMode == GameMode::GREEDY,
+             SDL_PointInRect(&mousePt, &modeGreedy));
+  DrawButton(modeHybrid, "D&C & DP",
+             currentMode == GameMode::DIVIDE_AND_CONQUER_DP,
+             SDL_PointInRect(&mousePt, &modeHybrid));
+
+  // Nodes
+  DrawTextCentered(cx, 460, "NODES", {189, 195, 199, 255}, 24);
+
+  // Value background and text
+  SDL_Rect valRect = {cx - 40, 490, 80, 50};
+  SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+  SDL_RenderFillRect(renderer, &valRect);
+  DrawTextCentered(cx, 515, std::to_string(currentNodeCount),
+                   {255, 255, 255, 255}, 32);
+
+  SDL_Rect nodeSub = {cx - 100, 490, 50, 50};
+  SDL_Rect nodeAdd = {cx + 50, 490, 50, 50};
+  DrawButton(nodeSub, "-", false, SDL_PointInRect(&mousePt, &nodeSub));
+  DrawButton(nodeAdd, "+", false, SDL_PointInRect(&mousePt, &nodeAdd));
+
+  // Start
+  SDL_Rect startBtn = {cx - 125, 600, 250, 70};
+  bool hoverStart = SDL_PointInRect(&mousePt, &startBtn);
+  DrawButton(startBtn, "START GAME", false, hoverStart);
+}
+
+void GameEngine::HandleHomeScreenInput(const SDL_Event &event) {
+  if (event.type == SDL_MOUSEBUTTONDOWN &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    int mx = event.button.x;
+    int my = event.button.y;
+    SDL_Point pt = {mx, my};
+    int cx = WINDOW_WIDTH / 2;
+
+    // Difficulty logic
+    SDL_Rect diffEasy = {cx - 190, 240, 120, 50};
+    SDL_Rect diffMed = {cx - 60, 240, 120, 50};
+    SDL_Rect diffHard = {cx + 70, 240, 120, 50};
+
+    if (SDL_PointInRect(&pt, &diffEasy)) {
+      SetDifficulty(Difficulty::EASY);
+      return;
+    }
+    if (SDL_PointInRect(&pt, &diffMed)) {
+      SetDifficulty(Difficulty::MEDIUM);
+      return;
+    }
+    if (SDL_PointInRect(&pt, &diffHard)) {
+      SetDifficulty(Difficulty::HARD);
+      return;
+    }
+
+    // Mode logic
+    SDL_Rect modeGreedy = {cx - 160, 370, 150, 50};
+    SDL_Rect modeHybrid = {cx + 10, 370, 150, 50};
+
+    if (SDL_PointInRect(&pt, &modeGreedy)) {
+      SetGameMode(GameMode::GREEDY);
+      return;
+    }
+    if (SDL_PointInRect(&pt, &modeHybrid)) {
+      SetGameMode(GameMode::DIVIDE_AND_CONQUER_DP);
+      return;
+    }
+
+    // Node logic
+    SDL_Rect nodeSub = {cx - 100, 490, 50, 50};
+    SDL_Rect nodeAdd = {cx + 50, 490, 50, 50};
+    if (SDL_PointInRect(&pt, &nodeSub)) {
+      SetNodeCount(std::max(3, currentNodeCount - 1));
+      return;
+    }
+    if (SDL_PointInRect(&pt, &nodeAdd)) {
+      SetNodeCount(std::min(100, currentNodeCount + 1));
+      return;
+    }
+
+    // Start logic
+    SDL_Rect startBtn = {cx - 125, 600, 250, 70};
+    if (SDL_PointInRect(&pt, &startBtn)) {
+      currentPhase = GamePhase::SHOWING_UNTANGLED;
+      
+      // Initialize full game cycle
+      intersectionCount = 0;
+      
+      // Ensure clean slate and generate graph based on current settings
+      StartNewGame();
+      
+      phaseStartTime = std::chrono::steady_clock::now();
+    }
   }
 }
 

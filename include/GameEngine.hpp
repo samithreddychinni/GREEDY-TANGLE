@@ -44,6 +44,7 @@ public:
 
   // Game phases for animated graph initialization
   enum class GamePhase {
+    MAIN_MENU,         
     SHOWING_UNTANGLED, // Display clean planar layout
     TANGLING,          // Animate nodes to tangled positions
     PLAYING,           // Human plays, CPU solves in background (RACE MODE)
@@ -74,7 +75,7 @@ private:
   bool isRunning = false;
 
   // Game phase state machine
-  GamePhase currentPhase = GamePhase::SHOWING_UNTANGLED;
+  GamePhase currentPhase = GamePhase::MAIN_MENU;
   std::chrono::steady_clock::time_point phaseStartTime;
   static constexpr float UNTANGLED_DISPLAY_DURATION = 1.5f; // seconds
   static constexpr float TANGLE_ANIMATION_DURATION = 1.0f;  // seconds
@@ -121,6 +122,7 @@ private:
   std::future<CPUMove> cpuFuture_;
   CPUMove currentCPUMove_;
   int cpuMoveCount_ = 0;
+  float cpuGameDuration_ = 0.0f;
 
   // Race Mode: CPU has its own copy of the graph
   std::vector<Node> cpuNodes_; // CPU's graph state
@@ -142,6 +144,10 @@ private:
   float autoSolveAnimProgress_ = 0.0f;
   CPUMove autoSolveCurrentMove_;
   static constexpr float AUTO_SOLVE_ANIM_DURATION = 0.3f; // Animation per move
+  
+  // UI Fonts
+  TTF_Font *titleFont = nullptr;
+  TTF_Font *uiFont = nullptr;
 
 public:
   GameEngine() = default;
@@ -276,6 +282,15 @@ private:
   void RenderScoreboard();   // Draw "H: X | CPU: Y" live scoreboard
   void StartNextCPUMove();   // Dispatch next CPU move computation
   float GetCPUDelay() const; // Get delay based on difficulty
+
+  // Home Screen UI
+  void RenderHomeScreen();
+  void HandleHomeScreenInput(const SDL_Event& event);
+  
+  // UI Helpers
+  void DrawButton(const SDL_Rect &rect, const std::string &text, bool isSelected, bool isHovered);
+  void DrawSlider(const SDL_Rect &rect, int min, int max, int &value, const std::string &label);
+  void DrawTextCentered(int x, int y, const std::string &text, SDL_Color color, int fontSize = 24);
 
   // Auto-solve feature
   void StartAutoSolve();  // Forfeit and show CPU solving human's graph
