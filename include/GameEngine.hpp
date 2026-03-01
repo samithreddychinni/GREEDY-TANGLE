@@ -62,7 +62,8 @@ public:
 
   enum class GameMode {
     GREEDY,
-    DIVIDE_AND_CONQUER_DP
+    DIVIDE_AND_CONQUER_DP,
+    BACKTRACKING
   };
 
 private:

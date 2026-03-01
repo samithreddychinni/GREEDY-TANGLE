@@ -47,6 +47,7 @@ set(SOURCES
     src/GreedySolver.cpp
     src/SolverFactory.cpp
     src/DnCDPSolver.cpp
+    src/BacktrackingSolver.cpp
 )
 
 # Executable

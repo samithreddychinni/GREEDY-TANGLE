@@ -9,8 +9,9 @@ namespace GreedyTangle {
 struct CPUMove;
 
 enum class SolverMode {
-  GREEDY,                  
-  DIVIDE_AND_CONQUER_DP    
+  GREEDY,
+  DIVIDE_AND_CONQUER_DP,
+  BACKTRACKING
 };
 
 

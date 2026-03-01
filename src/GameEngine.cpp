@@ -991,7 +991,10 @@ void GameEngine::SetupMenus() {
           currentMode == GameMode::GREEDY),
       MenuItem(
           "D&C + DP", [this]() { SetGameMode(GameMode::DIVIDE_AND_CONQUER_DP); }, true,
-          currentMode == GameMode::DIVIDE_AND_CONQUER_DP)};
+          currentMode == GameMode::DIVIDE_AND_CONQUER_DP),
+      MenuItem(
+          "Backtracking", [this]() { SetGameMode(GameMode::BACKTRACKING); }, true,
+          currentMode == GameMode::BACKTRACKING)};
   menuBar->AddMenu("Mode", modeMenu);
 
   // Settings menu - Node counts: 10, 15, 20, Custom (max 200)
@@ -1093,6 +1096,7 @@ void GameEngine::SetGameMode(GameMode mode) {
   if (menuBar) {
     menuBar->SetItemChecked(1, 0, mode == GameMode::GREEDY);
     menuBar->SetItemChecked(1, 1, mode == GameMode::DIVIDE_AND_CONQUER_DP);
+    menuBar->SetItemChecked(1, 2, mode == GameMode::BACKTRACKING);
   }
 
   // Restart game to apply new mode from scratch
@@ -1853,14 +1857,18 @@ void GameEngine::RenderHomeScreen() {
 
   // Mode
   DrawTextCentered(cx, 330, "SOLVER MODE", {189, 195, 199, 255}, 24);
-  SDL_Rect modeGreedy = {cx - 160, 370, 150, 50};
-  SDL_Rect modeHybrid = {cx + 10, 370, 150, 50};
+  SDL_Rect modeGreedy = {cx - 240, 370, 150, 50};
+  SDL_Rect modeHybrid = {cx - 75, 370, 150, 50};
+  SDL_Rect modeBacktrack = {cx + 90, 370, 150, 50};
 
   DrawButton(modeGreedy, "GREEDY", currentMode == GameMode::GREEDY,
              SDL_PointInRect(&mousePt, &modeGreedy));
   DrawButton(modeHybrid, "D&C & DP",
              currentMode == GameMode::DIVIDE_AND_CONQUER_DP,
              SDL_PointInRect(&mousePt, &modeHybrid));
+  DrawButton(modeBacktrack, "BACKTRACK",
+             currentMode == GameMode::BACKTRACKING,
+             SDL_PointInRect(&mousePt, &modeBacktrack));
 
   // Nodes
   DrawTextCentered(cx, 460, "NODES", {189, 195, 199, 255}, 24);
@@ -1910,8 +1918,9 @@ void GameEngine::HandleHomeScreenInput(const SDL_Event &event) {
     }
 
     // Mode logic
-    SDL_Rect modeGreedy = {cx - 160, 370, 150, 50};
-    SDL_Rect modeHybrid = {cx + 10, 370, 150, 50};
+    SDL_Rect modeGreedy = {cx - 240, 370, 150, 50};
+    SDL_Rect modeHybrid = {cx - 75, 370, 150, 50};
+    SDL_Rect modeBacktrack = {cx + 90, 370, 150, 50};
 
     if (SDL_PointInRect(&pt, &modeGreedy)) {
       SetGameMode(GameMode::GREEDY);
@@ -1919,6 +1928,10 @@ void GameEngine::HandleHomeScreenInput(const SDL_Event &event) {
     }
     if (SDL_PointInRect(&pt, &modeHybrid)) {
       SetGameMode(GameMode::DIVIDE_AND_CONQUER_DP);
+      return;
+    }
+    if (SDL_PointInRect(&pt, &modeBacktrack)) {
+      SetGameMode(GameMode::BACKTRACKING);
       return;
     }
 
