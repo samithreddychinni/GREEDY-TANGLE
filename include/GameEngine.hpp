@@ -52,7 +52,8 @@ public:
     VICTORY,           // Show analytics screen
     GAME_ENDED,        // Player ended game early - "You Lost"
     REPLAY_VIEWER,     // Step-by-step algorithm replay
-    BENCHMARK_RESULTS  // Algorithm comparison dashboard
+    BENCHMARK_RESULTS,  // Algorithm comparison dashboard
+    SCALABILITY_RESULTS // Empirical complexity analysis
   };
 
   // Difficulty levels
@@ -178,6 +179,20 @@ private:
   static constexpr int BENCHMARK_MAX_MOVES = 100;
   static constexpr float BENCHMARK_MAX_TIME = 30.0f; // seconds per solver
   bool benchmarkShowPlot_ = false; // Toggle between cards and convergence plot
+
+  // Scalability / Empirical Complexity Analysis (Feature 3)
+  struct ScalabilityDataPoint {
+    std::string solverName;
+    int nodeCount = 0;
+    int64_t timeMs = 0;
+    int moves = 0;
+    bool solved = false;
+  };
+  std::vector<ScalabilityDataPoint> scalabilityResults_;
+  static constexpr int SCALABILITY_SIZES[] = {5, 8, 10, 15, 20, 25, 30};
+  static constexpr int SCALABILITY_NUM_SIZES = 7;
+  static constexpr int SCALABILITY_MAX_MOVES = 50;
+  static constexpr float SCALABILITY_MAX_TIME = 15.0f; // seconds per solver per size
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -359,6 +374,11 @@ private:
 
   // Convergence Plot (Feature 2)
   void RenderConvergencePlot();     // Draw intersections vs. moves line chart
+
+  // Scalability / Empirical Complexity Analysis (Feature 3)
+  void RunScalabilityTest();              // Run all solvers on increasing graph sizes
+  void RenderScalabilityResults();        // Render runtime vs N chart
+  void HandleScalabilityInput(const SDL_Event &event); // Handle scalability screen input
 };
 
 } // namespace GreedyTangle

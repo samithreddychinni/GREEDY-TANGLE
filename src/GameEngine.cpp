@@ -150,6 +150,15 @@ void GameEngine::HandleInput() {
       continue;
     }
 
+    // Scalability results has its own input handling
+    if (currentPhase == GamePhase::SCALABILITY_RESULTS) {
+      if (event.type == SDL_QUIT) {
+        isRunning = false;
+      }
+      HandleScalabilityInput(event);
+      continue;
+    }
+
     switch (event.type) {
     case SDL_QUIT:
       isRunning = false;
@@ -380,6 +389,15 @@ void GameEngine::Render() {
 
   if (currentPhase == GamePhase::BENCHMARK_RESULTS) {
     RenderBenchmarkResults();
+    if (menuBar) {
+      menuBar->Render();
+    }
+    SDL_RenderPresent(renderer);
+    return;
+  }
+
+  if (currentPhase == GamePhase::SCALABILITY_RESULTS) {
+    RenderScalabilityResults();
     if (menuBar) {
       menuBar->Render();
     }
@@ -1051,6 +1069,9 @@ void GameEngine::UpdatePhase() {
   case GamePhase::BENCHMARK_RESULTS:
     // Static screen, no updates needed
     break;
+  case GamePhase::SCALABILITY_RESULTS:
+    // Static screen, no updates needed
+    break;
   }
 }
 
@@ -1069,6 +1090,7 @@ void GameEngine::SetupMenus() {
           heatmapEnabled_),
       MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
       MenuItem("Run Benchmark", [this]() { RunBenchmark(); }),
+      MenuItem("Run Scalability Test", [this]() { RunScalabilityTest(); }),
       MenuItem(), // Separator
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
@@ -3277,6 +3299,413 @@ void GameEngine::RenderConvergencePlot() {
     SDL_RenderDrawRect(renderer, &backBtn);
     if (menuBar) {
       menuBar->RenderTextCentered("Back to Cards", backBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+}
+
+void GameEngine::RunScalabilityTest() {
+  // Wait for any in-flight CPU task
+  if (cpuSolving_ && cpuFuture_.valid()) {
+    cpuFuture_.wait();
+    cpuSolving_ = false;
+  }
+
+  scalabilityResults_.clear();
+  std::cout << "[Scalability] Starting empirical complexity analysis..."
+            << std::endl;
+
+  SolverMode modes[] = {SolverMode::GREEDY, SolverMode::BACKTRACKING,
+                        SolverMode::DIVIDE_AND_CONQUER_DP};
+
+  // Save current graph state
+  auto savedNodes = nodes;
+  auto savedEdges = edges;
+
+  for (int sizeIdx = 0; sizeIdx < SCALABILITY_NUM_SIZES; ++sizeIdx) {
+    int N = SCALABILITY_SIZES[sizeIdx];
+    std::cout << "[Scalability] Testing N=" << N << "..." << std::endl;
+
+    // Generate a fresh graph of size N
+    ClearGraph();
+    for (int i = 0; i < N; ++i) {
+      AddNode(Vec2(0, 0));
+    }
+    // Build cycle edges
+    for (int i = 0; i < N; ++i) {
+      AddEdge(i, (i + 1) % N);
+    }
+    // Add some chord edges for complexity
+    std::mt19937 rng(42 + N); // Deterministic seed per size for fairness
+    int chords = std::max(1, N / 3);
+    for (int c = 0; c < chords; ++c) {
+      int a = rng() % N;
+      int b = rng() % N;
+      if (a != b && std::abs(a - b) > 1 && !(a == 0 && b == N - 1) &&
+          !(b == 0 && a == N - 1)) {
+        // Check if edge already exists
+        bool exists = false;
+        for (const auto &e : edges) {
+          if ((e.u_id == a && e.v_id == b) || (e.u_id == b && e.v_id == a)) {
+            exists = true;
+            break;
+          }
+        }
+        if (!exists) {
+          AddEdge(a, b);
+        }
+      }
+    }
+    GeneratePlanarLayout();
+    ApplyCircleScramble();
+    // Apply tangled positions
+    for (size_t i = 0; i < nodes.size(); ++i) {
+      nodes[i].position = targetPositions[i];
+    }
+
+    int initialIntersections = CountIntersections(nodes, edges);
+    if (initialIntersections == 0) {
+      // Graph isn't tangled enough, still record zero times
+      for (SolverMode mode : modes) {
+        auto solver = CreateSolver(mode);
+        ScalabilityDataPoint dp;
+        dp.solverName = solver->GetName();
+        dp.nodeCount = N;
+        dp.timeMs = 0;
+        dp.moves = 0;
+        dp.solved = true;
+        scalabilityResults_.push_back(dp);
+      }
+      continue;
+    }
+
+    // Snapshot the tangled graph
+    std::vector<Node> snapshotNodes = nodes;
+    std::vector<Edge> snapshotEdges = edges;
+
+    for (SolverMode mode : modes) {
+      auto solver = CreateSolver(mode);
+      ScalabilityDataPoint dp;
+      dp.solverName = solver->GetName();
+      dp.nodeCount = N;
+
+      // Clone graph for this solver
+      std::vector<Node> solverNodes = snapshotNodes;
+      int currentCount = initialIntersections;
+
+      auto startTime = std::chrono::steady_clock::now();
+
+      for (int moveNum = 0; moveNum < SCALABILITY_MAX_MOVES; ++moveNum) {
+        auto now = std::chrono::steady_clock::now();
+        float elapsed = std::chrono::duration<float>(now - startTime).count();
+        if (elapsed >= SCALABILITY_MAX_TIME)
+          break;
+        if (currentCount == 0)
+          break;
+
+        CPUMove move = solver->FindBestMove(solverNodes, snapshotEdges);
+        if (!move.isValid() || move.intersection_reduction <= 0)
+          break;
+
+        solverNodes[move.node_id].position = move.to_position;
+        currentCount = CountIntersections(solverNodes, snapshotEdges);
+        ++dp.moves;
+      }
+
+      auto endTime = std::chrono::steady_clock::now();
+      dp.timeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      endTime - startTime)
+                      .count();
+      dp.solved = (currentCount == 0);
+
+      std::cout << "[Scalability] " << dp.solverName << " N=" << N << ": "
+                << dp.moves << " moves, " << dp.timeMs << "ms"
+                << (dp.solved ? " (SOLVED)" : "") << std::endl;
+
+      scalabilityResults_.push_back(dp);
+    }
+  }
+
+  // Restore original graph state
+  nodes = savedNodes;
+  edges = savedEdges;
+
+  currentPhase = GamePhase::SCALABILITY_RESULTS;
+  std::cout << "[Scalability] Complete. Showing results." << std::endl;
+}
+
+void GameEngine::HandleScalabilityInput(const SDL_Event &event) {
+  if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+    currentPhase = GamePhase::MAIN_MENU;
+    return;
+  }
+
+  if (event.type == SDL_MOUSEBUTTONDOWN &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    int mx = event.button.x;
+    int my = event.button.y;
+    SDL_Point pt = {mx, my};
+
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+
+    // "Back to Menu" button
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    if (SDL_PointInRect(&pt, &backBtn)) {
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    }
+
+    // "Re-run" button
+    SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
+    if (SDL_PointInRect(&pt, &rerunBtn)) {
+      RunScalabilityTest();
+      return;
+    }
+  }
+}
+
+void GameEngine::RenderScalabilityResults() {
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  if (scalabilityResults_.empty())
+    return;
+
+  // Background
+  SDL_SetRenderDrawColor(renderer, 20, 20, 25, 255);
+  SDL_RenderClear(renderer);
+
+  // Title
+  if (menuBar) {
+    SDL_Rect titleRect = {0, 30, winW, 40};
+    menuBar->RenderTextCentered("Scalability Analysis: Runtime vs Graph Size",
+                                titleRect, {255, 255, 255, 255});
+  }
+
+  // Chart area
+  int chartLeft = 100;
+  int chartRight = winW - 40;
+  int chartTop = 80;
+  int chartBottom = winH - 160;
+  int chartWidth = chartRight - chartLeft;
+  int chartHeight = chartBottom - chartTop;
+
+  // Draw chart background
+  SDL_Rect chartBg = {chartLeft - 5, chartTop - 5, chartWidth + 10,
+                      chartHeight + 10};
+  SDL_SetRenderDrawColor(renderer, 30, 30, 40, 255);
+  SDL_RenderFillRect(renderer, &chartBg);
+  SDL_SetRenderDrawColor(renderer, 60, 60, 80, 255);
+  SDL_RenderDrawRect(renderer, &chartBg);
+
+  // Find max time for Y-axis scaling
+  int64_t maxTime = 1;
+  for (const auto &dp : scalabilityResults_) {
+    maxTime = std::max(maxTime, dp.timeMs);
+  }
+  // Round up to nice number
+  int64_t yMax = maxTime;
+  if (yMax < 10) yMax = 10;
+  else if (yMax < 100) yMax = ((yMax / 10) + 1) * 10;
+  else if (yMax < 1000) yMax = ((yMax / 100) + 1) * 100;
+  else yMax = ((yMax / 1000) + 1) * 1000;
+
+  // Draw grid lines
+  int numGridLines = 5;
+  SDL_SetRenderDrawColor(renderer, 40, 40, 55, 255);
+  for (int i = 0; i <= numGridLines; ++i) {
+    int y = chartBottom - (i * chartHeight / numGridLines);
+    SDL_RenderDrawLine(renderer, chartLeft, y, chartRight, y);
+
+    // Y-axis label
+    if (menuBar) {
+      int64_t val = (yMax * i) / numGridLines;
+      std::string label;
+      if (yMax >= 1000) {
+        label = std::to_string(val / 1000) + "." +
+                std::to_string((val % 1000) / 100) + "s";
+      } else {
+        label = std::to_string(val) + "ms";
+      }
+      SDL_Rect labelRect = {chartLeft - 90, y - 8, 80, 16};
+      menuBar->RenderTextCentered(label, labelRect, {150, 150, 170, 255});
+    }
+  }
+
+  // Draw vertical grid lines for each N value
+  for (int i = 0; i < SCALABILITY_NUM_SIZES; ++i) {
+    int x = chartLeft + (i * chartWidth) / (SCALABILITY_NUM_SIZES - 1);
+    SDL_SetRenderDrawColor(renderer, 40, 40, 55, 255);
+    SDL_RenderDrawLine(renderer, x, chartTop, x, chartBottom);
+
+    // X-axis label
+    if (menuBar) {
+      std::string label = "N=" + std::to_string(SCALABILITY_SIZES[i]);
+      SDL_Rect labelRect = {x - 25, chartBottom + 5, 50, 16};
+      menuBar->RenderTextCentered(label, labelRect, {150, 150, 170, 255});
+    }
+  }
+
+  // Solver colors (same as convergence plot)
+  SDL_Color solverColors[] = {
+      {50, 205, 50, 255},   // Green - Greedy
+      {255, 165, 0, 255},   // Orange - Backtracking
+      {100, 180, 255, 255}  // Blue - D&C+DP
+  };
+  std::string solverNames[] = {"Greedy", "Backtracking", "D&C + DP"};
+
+  // Group data by solver
+  for (int s = 0; s < 3; ++s) {
+    SDL_Color color = solverColors[s];
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+
+    // Collect data points for this solver
+    std::vector<std::pair<int, int64_t>> points; // (sizeIdx, timeMs)
+    for (const auto &dp : scalabilityResults_) {
+      if (dp.solverName == solverNames[s]) {
+        // Find size index
+        for (int i = 0; i < SCALABILITY_NUM_SIZES; ++i) {
+          if (SCALABILITY_SIZES[i] == dp.nodeCount) {
+            points.emplace_back(i, dp.timeMs);
+            break;
+          }
+        }
+      }
+    }
+
+    // Draw connecting lines (thick: 3 pixel offsets)
+    for (size_t i = 1; i < points.size(); ++i) {
+      int x1 =
+          chartLeft + (points[i - 1].first * chartWidth) / (SCALABILITY_NUM_SIZES - 1);
+      int y1 = chartBottom -
+               static_cast<int>((static_cast<double>(points[i - 1].second) /
+                                 static_cast<double>(yMax)) *
+                                chartHeight);
+      int x2 =
+          chartLeft + (points[i].first * chartWidth) / (SCALABILITY_NUM_SIZES - 1);
+      int y2 = chartBottom -
+               static_cast<int>((static_cast<double>(points[i].second) /
+                                 static_cast<double>(yMax)) *
+                                chartHeight);
+
+      // Clamp to chart area
+      y1 = std::max(chartTop, std::min(chartBottom, y1));
+      y2 = std::max(chartTop, std::min(chartBottom, y2));
+
+      // Draw thick line (3 offsets)
+      for (int offset = -1; offset <= 1; ++offset) {
+        SDL_RenderDrawLine(renderer, x1, y1 + offset, x2, y2 + offset);
+      }
+    }
+
+    // Draw data points (filled circles)
+    for (const auto &pt : points) {
+      int x =
+          chartLeft + (pt.first * chartWidth) / (SCALABILITY_NUM_SIZES - 1);
+      int y = chartBottom -
+              static_cast<int>((static_cast<double>(pt.second) /
+                                static_cast<double>(yMax)) *
+                               chartHeight);
+      y = std::max(chartTop, std::min(chartBottom, y));
+
+      // Draw filled circle (radius 4)
+      for (int dy = -4; dy <= 4; ++dy) {
+        for (int dx = -4; dx <= 4; ++dx) {
+          if (dx * dx + dy * dy <= 16) {
+            SDL_RenderDrawPoint(renderer, x + dx, y + dy);
+          }
+        }
+      }
+
+      // Draw time label near each point
+      if (menuBar) {
+        std::string timeStr;
+        if (pt.second >= 1000) {
+          timeStr = std::to_string(pt.second / 1000) + "." +
+                    std::to_string((pt.second % 1000) / 100) + "s";
+        } else {
+          timeStr = std::to_string(pt.second) + "ms";
+        }
+        SDL_Rect labelRect = {x - 20, y - 18, 40, 14};
+        menuBar->RenderTextCentered(timeStr, labelRect, color);
+      }
+    }
+  }
+
+  // Draw axes
+  SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
+  SDL_RenderDrawLine(renderer, chartLeft, chartTop, chartLeft, chartBottom);
+  SDL_RenderDrawLine(renderer, chartLeft, chartBottom, chartRight, chartBottom);
+
+  // Axis labels
+  if (menuBar) {
+    SDL_Rect xLabel = {winW / 2 - 80, chartBottom + 25, 160, 20};
+    menuBar->RenderTextCentered("Graph Size (N)", xLabel,
+                                {200, 200, 210, 255});
+
+    // Y-axis label (rendered horizontally due to SDL limitations)
+    SDL_Rect yLabel = {5, chartTop + chartHeight / 2 - 10, 80, 20};
+    menuBar->RenderTextCentered("Runtime", yLabel, {200, 200, 210, 255});
+  }
+
+  // Legend
+  int legendX = chartRight - 200;
+  int legendY = chartTop + 10;
+  SDL_Rect legendBg = {legendX - 5, legendY - 5, 195, 80};
+  SDL_SetRenderDrawColor(renderer, 30, 30, 40, 220);
+  SDL_RenderFillRect(renderer, &legendBg);
+  SDL_SetRenderDrawColor(renderer, 80, 80, 100, 255);
+  SDL_RenderDrawRect(renderer, &legendBg);
+
+  for (int s = 0; s < 3; ++s) {
+    SDL_Color color = solverColors[s];
+    int ly = legendY + s * 22;
+
+    // Color swatch line
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    for (int offset = -1; offset <= 1; ++offset) {
+      SDL_RenderDrawLine(renderer, legendX + 5, ly + 8 + offset,
+                         legendX + 30, ly + 8 + offset);
+    }
+    // Dot
+    for (int dy = -3; dy <= 3; ++dy) {
+      for (int dx = -3; dx <= 3; ++dx) {
+        if (dx * dx + dy * dy <= 9) {
+          SDL_RenderDrawPoint(renderer, legendX + 17 + dx, ly + 8 + dy);
+        }
+      }
+    }
+
+    if (menuBar) {
+      SDL_Rect nameRect = {legendX + 35, ly, 150, 16};
+      menuBar->RenderTextCentered(solverNames[s], nameRect, color);
+    }
+  }
+
+  // Buttons
+  // "Re-run" button
+  {
+    SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+    SDL_RenderFillRect(renderer, &rerunBtn);
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_RenderDrawRect(renderer, &rerunBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Re-run Test", rerunBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+
+  // "Back to Menu" button
+  {
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+    SDL_RenderFillRect(renderer, &backBtn);
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_RenderDrawRect(renderer, &backBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Back to Menu", backBtn,
                                   {255, 255, 255, 255});
     }
   }
