@@ -1111,7 +1111,7 @@ void GameEngine::SetupMenus() {
           heatmapEnabled_),
       MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
       MenuItem("Run Benchmark", [this]() { RunBenchmark(); }),
-      MenuItem("Run Scalability Test", [this]() { RunScalabilityTest(); }),
+      MenuItem("Complexity Analysis", [this]() { RunScalabilityTest(); }),
       MenuItem("How It Works", [this]() {
         howItWorksTab_ = 0;
         currentPhase = GamePhase::HOW_IT_WORKS;
@@ -2779,41 +2779,42 @@ void GameEngine::RenderReplayViewer() {
 // ============== ALGORITHM COMPARISON / BENCHMARK MODE (Feature 1) ==============
 
 void GameEngine::RunBenchmark() {
-  // Need a tangled graph to benchmark against
-  if (nodes.empty()) {
-    std::cout << "[Benchmark] No graph available. Start a game first."
-              << std::endl;
-    return;
-  }
-
   // Wait for any in-flight CPU task
   if (cpuSolving_ && cpuFuture_.valid()) {
     cpuFuture_.wait();
     cpuSolving_ = false;
   }
 
-  // Snapshot the current tangled graph (use cpuNodes_ if available, else nodes)
-  std::vector<Node> snapshotNodes =
-      cpuNodes_.empty() ? nodes : cpuNodes_;
-  // If we're at main menu, generate a fresh graph for benchmarking
-  if (currentPhase == GamePhase::MAIN_MENU) {
-    // Generate a temporary graph
+  // If we're at main menu or have no graph, generate a fresh one
+  if (nodes.empty() || currentPhase == GamePhase::MAIN_MENU ||
+      currentPhase == GamePhase::BENCHMARK_RESULTS) {
     ClearGraph();
     for (int i = 0; i < currentNodeCount; ++i) {
       AddNode(Vec2(0, 0));
     }
-    // Build edges via easy generator logic (cycle + chords)
     for (int i = 0; i < currentNodeCount; ++i) {
       AddEdge(i, (i + 1) % currentNodeCount);
     }
+    // Add chord edges for complexity
+    std::mt19937 rng(42);
+    int chords = std::max(1, currentNodeCount / 3);
+    for (int c = 0; c < chords; ++c) {
+      int a = rng() % currentNodeCount;
+      int b = rng() % currentNodeCount;
+      if (a != b && std::abs(a - b) > 1) {
+        AddEdge(a, b);
+      }
+    }
     GeneratePlanarLayout();
     ApplyCircleScramble();
-    // Apply tangled positions
     for (size_t i = 0; i < nodes.size(); ++i) {
       nodes[i].position = targetPositions[i];
     }
-    snapshotNodes = nodes;
   }
+
+  // Snapshot the current tangled graph (use cpuNodes_ if available, else nodes)
+  std::vector<Node> snapshotNodes =
+      cpuNodes_.empty() ? nodes : cpuNodes_;
 
   int initialIntersections = CountIntersections(snapshotNodes, edges);
   if (initialIntersections == 0) {
@@ -2823,6 +2824,7 @@ void GameEngine::RunBenchmark() {
   }
 
   benchmarkResults_.clear();
+  benchmarkShowPlot_ = false;
   std::cout << "[Benchmark] Starting comparison on " << snapshotNodes.size()
             << " nodes, " << edges.size() << " edges, "
             << initialIntersections << " intersections..." << std::endl;
@@ -2832,6 +2834,9 @@ void GameEngine::RunBenchmark() {
                         SolverMode::DIVIDE_AND_CONQUER_DP};
 
   for (SolverMode mode : modes) {
+    // Keep app responsive between solvers
+    SDL_PumpEvents();
+
     auto solver = CreateSolver(mode);
     BenchmarkResult result;
     result.solverName = solver->GetName();
@@ -2854,6 +2859,9 @@ void GameEngine::RunBenchmark() {
 
       if (currentCount == 0)
         break;
+
+      // Keep app responsive during long computations
+      SDL_PumpEvents();
 
       CPUMove move = solver->FindBestMove(solverNodes, edges);
       result.totalCandidatesEvaluated += solver->GetLastCandidatesEvaluated();
@@ -3337,7 +3345,7 @@ void GameEngine::RunScalabilityTest() {
   }
 
   scalabilityResults_.clear();
-  std::cout << "[Scalability] Starting empirical complexity analysis..."
+  std::cout << "[Complexity] Starting empirical complexity analysis..."
             << std::endl;
 
   SolverMode modes[] = {SolverMode::GREEDY, SolverMode::BACKTRACKING,
@@ -3349,7 +3357,10 @@ void GameEngine::RunScalabilityTest() {
 
   for (int sizeIdx = 0; sizeIdx < SCALABILITY_NUM_SIZES; ++sizeIdx) {
     int N = SCALABILITY_SIZES[sizeIdx];
-    std::cout << "[Scalability] Testing N=" << N << "..." << std::endl;
+    std::cout << "[Complexity] Testing N=" << N << "..." << std::endl;
+
+    // Keep app responsive between graph sizes
+    SDL_PumpEvents();
 
     // Generate a fresh graph of size N
     ClearGraph();
@@ -3409,6 +3420,9 @@ void GameEngine::RunScalabilityTest() {
     std::vector<Edge> snapshotEdges = edges;
 
     for (SolverMode mode : modes) {
+      // Keep app responsive between solvers
+      SDL_PumpEvents();
+
       auto solver = CreateSolver(mode);
       ScalabilityDataPoint dp;
       dp.solverName = solver->GetName();
@@ -3428,6 +3442,9 @@ void GameEngine::RunScalabilityTest() {
         if (currentCount == 0)
           break;
 
+        // Keep app responsive during long computations
+        SDL_PumpEvents();
+
         CPUMove move = solver->FindBestMove(solverNodes, snapshotEdges);
         if (!move.isValid() || move.intersection_reduction <= 0)
           break;
@@ -3443,7 +3460,7 @@ void GameEngine::RunScalabilityTest() {
                       .count();
       dp.solved = (currentCount == 0);
 
-      std::cout << "[Scalability] " << dp.solverName << " N=" << N << ": "
+      std::cout << "[Complexity] " << dp.solverName << " N=" << N << ": "
                 << dp.moves << " moves, " << dp.timeMs << "ms"
                 << (dp.solved ? " (SOLVED)" : "") << std::endl;
 
@@ -3456,7 +3473,7 @@ void GameEngine::RunScalabilityTest() {
   edges = savedEdges;
 
   currentPhase = GamePhase::SCALABILITY_RESULTS;
-  std::cout << "[Scalability] Complete. Showing results." << std::endl;
+  std::cout << "[Complexity] Complete. Showing results." << std::endl;
 }
 
 void GameEngine::HandleScalabilityInput(const SDL_Event &event) {
@@ -3504,7 +3521,7 @@ void GameEngine::RenderScalabilityResults() {
   // Title
   if (menuBar) {
     SDL_Rect titleRect = {0, 30, winW, 40};
-    menuBar->RenderTextCentered("Scalability Analysis: Runtime vs Graph Size",
+    menuBar->RenderTextCentered("Complexity Analysis: Runtime vs Graph Size",
                                 titleRect, {255, 255, 255, 255});
   }
 
@@ -3717,7 +3734,7 @@ void GameEngine::RenderScalabilityResults() {
     SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
     SDL_RenderDrawRect(renderer, &rerunBtn);
     if (menuBar) {
-      menuBar->RenderTextCentered("Re-run Test", rerunBtn,
+      menuBar->RenderTextCentered("Re-run Analysis", rerunBtn,
                                   {255, 255, 255, 255});
     }
   }

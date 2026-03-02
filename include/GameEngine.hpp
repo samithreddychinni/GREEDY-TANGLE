@@ -190,10 +190,10 @@ private:
     bool solved = false;
   };
   std::vector<ScalabilityDataPoint> scalabilityResults_;
-  static constexpr int SCALABILITY_SIZES[] = {5, 8, 10, 15, 20, 25, 30};
+  static constexpr int SCALABILITY_SIZES[] = {4, 6, 8, 10, 13, 16, 20};
   static constexpr int SCALABILITY_NUM_SIZES = 7;
-  static constexpr int SCALABILITY_MAX_MOVES = 50;
-  static constexpr float SCALABILITY_MAX_TIME = 15.0f; // seconds per solver per size
+  static constexpr int SCALABILITY_MAX_MOVES = 30;
+  static constexpr float SCALABILITY_MAX_TIME = 10.0f; // seconds per solver per size
 
   // How It Works explainer (selected algorithm tab index)
   int howItWorksTab_ = 0; // 0=Greedy, 1=Backtracking, 2=D&C+DP
