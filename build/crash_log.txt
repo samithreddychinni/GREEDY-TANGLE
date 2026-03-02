@@ -1,0 +1,12 @@
+=== Greedy Tangle ===
+A Competitive Graph Theory Puzzle
+-----------------------------------
+Controls:
+  - Left Click + Drag: Move nodes
+  - ESC: Quit
+-----------------------------------
+Goal: Untangle the graph (make all edges green)
+
+[MenuBar] Loaded font: /usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf
+[Game] Initialized successfully
+[Game] Loaded UI fonts from: /usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf
