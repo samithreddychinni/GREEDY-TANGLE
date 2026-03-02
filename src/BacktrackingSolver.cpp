@@ -18,7 +18,7 @@ CPUMove BacktrackingSolver::FindBestMove(std::vector<Node> nodes,
   CPUMove best_move;
   best_move.intersections_before = current_intersections;
 
-  if (current_intersections == 0) {
+  if (current_intersections == 0 || IsCancelled()) {
     return best_move;
   }
 
@@ -27,6 +27,10 @@ CPUMove BacktrackingSolver::FindBestMove(std::vector<Node> nodes,
 
   Backtrack(nodes, edges, 0, current_intersections,
             bestIntersections, bestFirstMove);
+
+  if (IsCancelled()) {
+    return best_move;
+  }
 
   if (bestFirstMove.node_id >= 0) {
     best_move.node_id = bestFirstMove.node_id;
@@ -39,12 +43,13 @@ CPUMove BacktrackingSolver::FindBestMove(std::vector<Node> nodes,
   if (!best_move.isValid() || best_move.intersection_reduction <= 0) {
     float max_min_distance = 0.0f;
 
-    for (size_t node_idx = 0; node_idx < nodes.size(); ++node_idx) {
+    for (size_t node_idx = 0; node_idx < nodes.size() && !IsCancelled(); ++node_idx) {
       Vec2 original_position = nodes[node_idx].position;
       std::vector<Vec2> candidates =
           GenerateCandidatePositions(static_cast<int>(node_idx), nodes);
 
       for (const Vec2 &candidate : candidates) {
+        if (IsCancelled() || lastCandidatesEvaluated_ > MAX_EVALUATIONS) break;
         ++lastCandidatesEvaluated_;
 
         nodes[node_idx].position = candidate;
@@ -100,6 +105,10 @@ void BacktrackingSolver::Backtrack(std::vector<Node> &nodes,
                                    int currentIntersections,
                                    int &bestIntersections,
                                    MoveCandidate &bestFirstMove) {
+  if (IsCancelled() || lastCandidatesEvaluated_ > MAX_EVALUATIONS) {
+    return;
+  }
+
   if (currentIntersections == 0) {
     return;
   }
@@ -108,13 +117,14 @@ void BacktrackingSolver::Backtrack(std::vector<Node> &nodes,
     return;
   }
 
-  for (size_t node_idx = 0; node_idx < nodes.size(); ++node_idx) {
+  for (size_t node_idx = 0; node_idx < nodes.size() && !IsCancelled(); ++node_idx) {
     Vec2 original_position = nodes[node_idx].position;
 
     std::vector<Vec2> candidates =
         GenerateCandidatePositions(static_cast<int>(node_idx), nodes);
 
     for (const Vec2 &candidate : candidates) {
+      if (IsCancelled() || lastCandidatesEvaluated_ > MAX_EVALUATIONS) return;
       ++lastCandidatesEvaluated_;
 
       nodes[node_idx].position = candidate;

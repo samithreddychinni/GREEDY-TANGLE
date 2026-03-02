@@ -10,12 +10,39 @@
 #include <random>
 #include <sstream>
 #include <stdexcept>
-
-
+#include <functional>
+#include <mutex>
 
 namespace GreedyTangle {
 
+class StreamRedirector : public std::streambuf {
+public:
+    StreamRedirector(std::ostream& stream, std::function<void(const std::string&)> callback)
+        : stream_(stream), callback_(callback), old_buf_(stream.rdbuf()) {
+        stream_.rdbuf(this);
+    }
+    ~StreamRedirector() {
+        stream_.rdbuf(old_buf_);
+    }
+protected:
+    virtual int_type overflow(int_type v) override {
+        if (v == '\n') {
+            callback_(buffer_);
+            buffer_.clear();
+        } else if (v != EOF) {
+            buffer_ += static_cast<char>(v);
+        }
+        return old_buf_->sputc(v); // Also print to terminal
+    }
+private:
+    std::ostream& stream_;
+    std::function<void(const std::string&)> callback_;
+    std::streambuf* old_buf_;
+    std::string buffer_;
+};
+
 GameEngine::~GameEngine() { Cleanup(); }
+
 
 void GameEngine::Init() {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -312,6 +339,21 @@ void GameEngine::UpdateHoverState() {
 }
 
 void GameEngine::Update() {
+  if (currentPhase == GamePhase::COMPUTING_BENCHMARK || currentPhase == GamePhase::COMPUTING_SCALABILITY) {
+    if (backgroundTask_.valid() && backgroundTask_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      if (logRedirector_) {
+        delete static_cast<StreamRedirector*>(logRedirector_);
+        logRedirector_ = nullptr;
+      }
+      if (currentPhase == GamePhase::COMPUTING_BENCHMARK) {
+        currentPhase = GamePhase::BENCHMARK_RESULTS;
+      } else {
+        currentPhase = GamePhase::SCALABILITY_RESULTS;
+      }
+    }
+    return;
+  }
+
   for (Edge &edge : edges) {
     edge.isIntersecting = false;
   }
@@ -380,6 +422,16 @@ void GameEngine::Render() {
                            Colors::BACKGROUND.b, Colors::BACKGROUND.a);
   }
   SDL_RenderClear(renderer);
+
+  if (currentPhase == GamePhase::COMPUTING_BENCHMARK) {
+    RenderComputingScreen("Running Benchmark Comparison...");
+    return;
+  }
+
+  if (currentPhase == GamePhase::COMPUTING_SCALABILITY) {
+    RenderComputingScreen("Running Empirical Complexity Analysis...");
+    return;
+  }
 
   if (currentPhase == GamePhase::MAIN_MENU) {
     RenderHomeScreen();
@@ -1110,8 +1162,8 @@ void GameEngine::SetupMenus() {
           "Toggle Heatmap (H)", [this]() { ToggleHeatmap(); }, true,
           heatmapEnabled_),
       MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
-      MenuItem("Run Benchmark", [this]() { RunBenchmark(); }),
-      MenuItem("Complexity Analysis", [this]() { RunScalabilityTest(); }),
+      MenuItem("Run Benchmark", [this]() { StartComputingBenchmark(); }),
+      MenuItem("Complexity Analysis", [this]() { StartComputingScalability(); }),
       MenuItem("How It Works", [this]() {
         howItWorksTab_ = 0;
         currentPhase = GamePhase::HOW_IT_WORKS;
@@ -1528,6 +1580,8 @@ void GameEngine::StartNextCPUMove() {
   }
 
   cpuSolving_ = true;
+  cpuCancelFlag_.store(false);
+  currentSolver_->SetCancelFlag(&cpuCancelFlag_);
 
   // Deep copy for thread safety
   auto nodes_copy = cpuNodes_;
@@ -1738,7 +1792,8 @@ void GameEngine::EndGame() {
     return;
   }
 
-  // Wait for any in-flight CPU async task
+  // Cancel any in-flight CPU async task
+  cpuCancelFlag_.store(true);
   if (cpuSolving_ && cpuFuture_.valid()) {
     cpuFuture_.wait();
   }
@@ -1764,9 +1819,16 @@ void GameEngine::TogglePauseCPU() {
   cpuPaused_ = !cpuPaused_;
 
   if (cpuPaused_) {
+    // Cancel any in-flight solver computation
+    cpuCancelFlag_.store(true);
+    if (cpuSolving_ && cpuFuture_.valid()) {
+      cpuFuture_.wait(); // Wait for cancelled solver to return
+      cpuSolving_ = false;
+    }
     std::cout << "[Game] CPU paused." << std::endl;
   } else {
     // Reset delay timer so CPU resumes cleanly
+    cpuCancelFlag_.store(false);
     cpuLastMoveTime_ = std::chrono::steady_clock::now();
     std::cout << "[Game] CPU resumed." << std::endl;
   }
@@ -2834,8 +2896,6 @@ void GameEngine::RunBenchmark() {
                         SolverMode::DIVIDE_AND_CONQUER_DP};
 
   for (SolverMode mode : modes) {
-    // Keep app responsive between solvers
-    SDL_PumpEvents();
 
     auto solver = CreateSolver(mode);
     BenchmarkResult result;
@@ -2859,9 +2919,6 @@ void GameEngine::RunBenchmark() {
 
       if (currentCount == 0)
         break;
-
-      // Keep app responsive during long computations
-      SDL_PumpEvents();
 
       CPUMove move = solver->FindBestMove(solverNodes, edges);
       result.totalCandidatesEvaluated += solver->GetLastCandidatesEvaluated();
@@ -2888,11 +2945,12 @@ void GameEngine::RunBenchmark() {
               << result.totalMoves << " moves, " << result.totalTimeMs
               << "ms, final=" << result.finalIntersections
               << (result.solved ? " (SOLVED)" : "") << std::endl;
-
     benchmarkResults_.push_back(result);
   }
 
-  currentPhase = GamePhase::BENCHMARK_RESULTS;
+  // Restore original graph
+  nodes = snapshotNodes;
+
   std::cout << "[Benchmark] Complete. Showing results." << std::endl;
 }
 
@@ -3359,9 +3417,6 @@ void GameEngine::RunScalabilityTest() {
     int N = SCALABILITY_SIZES[sizeIdx];
     std::cout << "[Complexity] Testing N=" << N << "..." << std::endl;
 
-    // Keep app responsive between graph sizes
-    SDL_PumpEvents();
-
     // Generate a fresh graph of size N
     ClearGraph();
     for (int i = 0; i < N; ++i) {
@@ -3420,8 +3475,6 @@ void GameEngine::RunScalabilityTest() {
     std::vector<Edge> snapshotEdges = edges;
 
     for (SolverMode mode : modes) {
-      // Keep app responsive between solvers
-      SDL_PumpEvents();
 
       auto solver = CreateSolver(mode);
       ScalabilityDataPoint dp;
@@ -3441,9 +3494,6 @@ void GameEngine::RunScalabilityTest() {
           break;
         if (currentCount == 0)
           break;
-
-        // Keep app responsive during long computations
-        SDL_PumpEvents();
 
         CPUMove move = solver->FindBestMove(solverNodes, snapshotEdges);
         if (!move.isValid() || move.intersection_reduction <= 0)
@@ -3472,7 +3522,6 @@ void GameEngine::RunScalabilityTest() {
   nodes = savedNodes;
   edges = savedEdges;
 
-  currentPhase = GamePhase::SCALABILITY_RESULTS;
   std::cout << "[Complexity] Complete. Showing results." << std::endl;
 }
 
@@ -4054,6 +4103,101 @@ void GameEngine::RenderHowItWorks() {
                                   {255, 255, 255, 255});
     }
   }
+}
+
+void GameEngine::PushLog(const std::string& message) {
+  std::lock_guard<std::mutex> lock(logMutex_);
+  if (!message.empty()) {
+    computingLogs_.push_back(message);
+    if (computingLogs_.size() > 20) {
+      computingLogs_.erase(computingLogs_.begin());
+    }
+  }
+}
+
+void GameEngine::RenderComputingScreen(const std::string& title) {
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  if (menuBar) {
+    SDL_Rect titleRect = {winW / 2 - 250, 60, 500, 40};
+    menuBar->RenderTextCentered(title, titleRect, {255, 255, 255, 255});
+  }
+
+  // Draw logs
+  {
+    std::lock_guard<std::mutex> lock(logMutex_);
+    int y = 140;
+    for (const auto& log : computingLogs_) {
+      if (menuBar) {
+        SDL_Rect textRect = {winW / 2 - 400, y, 800, 20};
+        menuBar->RenderTextCentered(log, textRect, {180, 180, 200, 255});
+      }
+      y += 22;
+    }
+  }
+
+  // Draw Spinner
+  computingSpinnerAngle_ += 6.0f;
+  if (computingSpinnerAngle_ >= 360.0f) computingSpinnerAngle_ -= 360.0f;
+  float rad = computingSpinnerAngle_ * M_PI / 180.0f;
+  int cx = winW / 2;
+  int cy = winH - 80;
+  int r = 24;
+  
+  SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+  for (int i = 0; i < 4; ++i) {
+      float a = rad + i * M_PI / 2.0f;
+      int x = cx + static_cast<int>(std::cos(a) * r);
+      int y2 = cy + static_cast<int>(std::sin(a) * r);
+      for(int dy=-3; dy<=3; ++dy) {
+         for(int dx=-3; dx<=3; ++dx) {
+            if (dx*dx + dy*dy <= 9) {
+               SDL_RenderDrawPoint(renderer, x+dx, y2+dy);
+            }
+         }
+      }
+  }
+
+  SDL_RenderPresent(renderer);
+}
+
+void GameEngine::StartComputingBenchmark() {
+  currentPhase = GamePhase::COMPUTING_BENCHMARK;
+  {
+    std::lock_guard<std::mutex> lock(logMutex_);
+    computingLogs_.clear();
+  }
+  
+  if (logRedirector_) {
+    delete static_cast<StreamRedirector*>(logRedirector_);
+  }
+  logRedirector_ = new StreamRedirector(std::cout, [this](const std::string& msg) {
+      this->PushLog(msg);
+  });
+  
+  backgroundTask_ = std::async(std::launch::async, [this]() {
+      this->RunBenchmark();
+  });
+}
+
+void GameEngine::StartComputingScalability() {
+  currentPhase = GamePhase::COMPUTING_SCALABILITY;
+  {
+    std::lock_guard<std::mutex> lock(logMutex_);
+    computingLogs_.clear();
+  }
+  
+  if (logRedirector_) {
+    delete static_cast<StreamRedirector*>(logRedirector_);
+  }
+  logRedirector_ = new StreamRedirector(std::cout, [this](const std::string& msg) {
+      this->PushLog(msg);
+  });
+  
+  backgroundTask_ = std::async(std::launch::async, [this]() {
+      this->RunScalabilityTest();
+  });
 }
 
 } // namespace GreedyTangle

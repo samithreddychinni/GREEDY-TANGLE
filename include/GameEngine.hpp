@@ -10,6 +10,7 @@
 #else
 #include <SDL2/SDL.h>
 #endif
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -54,7 +55,9 @@ public:
     REPLAY_VIEWER,     // Step-by-step algorithm replay
     BENCHMARK_RESULTS,  // Algorithm comparison dashboard
     SCALABILITY_RESULTS, // Empirical complexity analysis
-    HOW_IT_WORKS        // Interactive algorithm explainer
+    HOW_IT_WORKS,        // Interactive algorithm explainer
+    COMPUTING_BENCHMARK, // Background computation for benchmark
+    COMPUTING_SCALABILITY// Background computation for scalability
   };
 
   // Difficulty levels
@@ -129,6 +132,7 @@ private:
   CPUMove currentCPUMove_;
   int cpuMoveCount_ = 0;
   float cpuGameDuration_ = 0.0f;
+  std::atomic<bool> cpuCancelFlag_{false}; // Cancellation flag for solver
 
   // Race Mode: CPU has its own copy of the graph
   std::vector<Node> cpuNodes_; // CPU's graph state
@@ -195,8 +199,15 @@ private:
   static constexpr int SCALABILITY_MAX_MOVES = 30;
   static constexpr float SCALABILITY_MAX_TIME = 10.0f; // seconds per solver per size
 
-  // How It Works explainer (selected algorithm tab index)
+  // How It Works - Interactive Algorithm Explainer
   int howItWorksTab_ = 0; // 0=Greedy, 1=Backtracking, 2=D&C+DP
+
+  // UI Logging and Background Computation
+  std::future<void> backgroundTask_;
+  std::vector<std::string> computingLogs_;
+  std::mutex logMutex_;
+  void* logRedirector_ = nullptr;
+  float computingSpinnerAngle_ = 0.0f;
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -387,6 +398,12 @@ private:
   // How It Works - Interactive Algorithm Explainer
   void RenderHowItWorks();              // Render explainer screen with tabs
   void HandleHowItWorksInput(const SDL_Event &event); // Handle tab clicks
+
+  // UI Logging and Async Computation
+  void StartComputingBenchmark();
+  void StartComputingScalability();
+  void PushLog(const std::string& message);
+  void RenderComputingScreen(const std::string& title);
 };
 
 } // namespace GreedyTangle

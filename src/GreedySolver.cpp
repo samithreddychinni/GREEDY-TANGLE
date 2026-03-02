@@ -23,13 +23,14 @@ CPUMove GreedySolver::FindBestMove(std::vector<Node> nodes,
     return best_move;
   }
 
-  for (size_t node_idx = 0; node_idx < nodes.size(); ++node_idx) {
+  for (size_t node_idx = 0; node_idx < nodes.size() && !IsCancelled(); ++node_idx) {
     Vec2 original_position = nodes[node_idx].position;
 
     std::vector<Vec2> candidates =
         GenerateCandidatePositions(static_cast<int>(node_idx), nodes);
 
     for (const Vec2 &candidate : candidates) {
+      if (IsCancelled()) break;
       ++lastCandidatesEvaluated_;
 
       int new_intersections = CountIntersectionsWithMove(

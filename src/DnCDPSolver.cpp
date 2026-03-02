@@ -105,6 +105,7 @@ CPUMove DnCDPSolver::SolveBaseCase(std::vector<Node> &nodes,
   int best_reduction = 0;
 
   for (int nodeIdx : partition.nodeIndices) {
+    if (IsCancelled()) break;
     Vec2 original = nodes[nodeIdx].position;
 
     float stepX = (partition.xMax - partition.xMin) / 6.0f;
@@ -217,11 +218,12 @@ CPUMove DnCDPSolver::SolveDP(std::vector<Node> &nodes,
   int firstNode = ordered[0];
   // Vec2 firstOriginal = nodes[firstNode].position; // Unused
   for (int j = 0; j < numCandidates; ++j) {
+    if (IsCancelled()) break;
     ++lastCandidatesEvaluated_;
     dp[0][j] = EvaluatePlacement(nodes, edges, firstNode, candidates[j]);
   }
 
-  for (int i = 1; i < numNodes; ++i) {
+  for (int i = 1; i < numNodes && !IsCancelled(); ++i) {
     int nodeIdx = ordered[i];
 
     int prevBestJ = 0;
@@ -387,7 +389,7 @@ CPUMove DnCDPSolver::FindBestMove(std::vector<Node> nodes,
 
   int current_intersections = CountIntersections(nodes, edges);
 
-  if (current_intersections == 0) {
+  if (current_intersections == 0 || IsCancelled()) {
     CPUMove move;
     move.intersections_before = 0;
     return move;

@@ -13,6 +13,7 @@ public:
   static constexpr float WINDOW_WIDTH = 1024.0f;
   static constexpr float WINDOW_HEIGHT = 768.0f;
   static constexpr int MAX_DEPTH = 3;
+  static constexpr int MAX_EVALUATIONS = 100000;
 
   BacktrackingSolver() = default;
 
