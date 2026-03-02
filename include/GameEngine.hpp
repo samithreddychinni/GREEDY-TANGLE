@@ -147,7 +147,13 @@ private:
   float autoSolveAnimProgress_ = 0.0f;
   CPUMove autoSolveCurrentMove_;
   static constexpr float AUTO_SOLVE_ANIM_DURATION = 0.3f; // Animation per move
-  
+
+  // Decision Heatmap (Feature 5)
+  bool heatmapEnabled_ = false;
+  std::vector<float> nodeHeatmapScores_; // Normalized 0.0-1.0 per node
+  std::chrono::steady_clock::time_point heatmapLastUpdate_;
+  static constexpr float HEATMAP_UPDATE_INTERVAL = 1.5f; // Recalc every 1.5s
+
   // UI Fonts
   TTF_Font *titleFont = nullptr;
   TTF_Font *uiFont = nullptr;
@@ -308,6 +314,12 @@ private:
 
   // Algorithm Description Panel (Feature 6)
   void RenderAlgorithmPanel(); // Draw solver info panel during gameplay
+
+  // Decision Heatmap (Feature 5)
+  void CalculateHeatmap();     // Compute per-node impact scores
+  void RenderHeatmapLegend();  // Draw color legend on screen
+  void ToggleHeatmap();        // Toggle heatmap on/off
+  SDL_Color GetHeatmapColor(float score) const; // Map score to color
 };
 
 } // namespace GreedyTangle

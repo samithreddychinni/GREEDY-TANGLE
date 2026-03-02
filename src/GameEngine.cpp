@@ -240,6 +240,9 @@ void GameEngine::HandleInput() {
         ClearGraph();
         GenerateTestGraph();
         break;
+      case SDLK_h:
+        ToggleHeatmap();
+        break;
       }
       break;
 
@@ -304,6 +307,19 @@ void GameEngine::Update() {
 
   // Check for victory condition
   CheckVictory();
+
+  // Periodically recalculate heatmap if enabled
+  if (heatmapEnabled_ && currentPhase == GamePhase::PLAYING &&
+      intersectionCount > 0) {
+    auto now = std::chrono::steady_clock::now();
+    float elapsed =
+        std::chrono::duration<float>(now - heatmapLastUpdate_).count();
+    if (elapsed >= HEATMAP_UPDATE_INTERVAL ||
+        nodeHeatmapScores_.size() != nodes.size()) {
+      CalculateHeatmap();
+      heatmapLastUpdate_ = now;
+    }
+  }
 }
 
 void GameEngine::Render() {
@@ -367,6 +383,9 @@ void GameEngine::Render() {
   // Render algorithm description panel during gameplay
   RenderAlgorithmPanel();
 
+  // Render heatmap legend if active
+  RenderHeatmapLegend();
+
   SDL_RenderPresent(renderer);
 }
 
@@ -388,6 +407,10 @@ void GameEngine::DrawNode(const Node &node) {
     fillColor = Colors::NODE_DRAGGING;
   } else if (node.isHovered) {
     fillColor = {150, 220, 255, 255};
+  } else if (heatmapEnabled_ && currentPhase == GamePhase::PLAYING &&
+             node.id >= 0 &&
+             node.id < static_cast<int>(nodeHeatmapScores_.size())) {
+    fillColor = GetHeatmapColor(nodeHeatmapScores_[node.id]);
   } else {
     fillColor = Colors::NODE_FILL;
   }
@@ -984,6 +1007,9 @@ void GameEngine::SetupMenus() {
       MenuItem("Restart", [this]() { StartNewGame(); }),
       MenuItem(), // Separator
       MenuItem("Auto Solve (Forfeit)", [this]() { StartAutoSolve(); }),
+      MenuItem(
+          "Toggle Heatmap (H)", [this]() { ToggleHeatmap(); }, true,
+          heatmapEnabled_),
       MenuItem(), // Separator
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
@@ -2076,6 +2102,176 @@ void GameEngine::RenderAlgorithmPanel() {
     std::string candStr = "Last eval: " + std::to_string(candidates) + " pos";
     SDL_Rect candRect = {panelX + 8, textY, panelW - 16, 16};
     menuBar->RenderTextCentered(candStr, candRect, {150, 150, 155, 255});
+  }
+}
+
+// ============== DECISION HEATMAP (Feature 5) ==============
+
+void GameEngine::ToggleHeatmap() {
+  heatmapEnabled_ = !heatmapEnabled_;
+  if (heatmapEnabled_) {
+    heatmapLastUpdate_ = std::chrono::steady_clock::time_point{}; // Force recalc
+    std::cout << "[Heatmap] Enabled" << std::endl;
+  } else {
+    nodeHeatmapScores_.clear();
+    std::cout << "[Heatmap] Disabled" << std::endl;
+  }
+
+  // Update menu checkbox (Game menu index 0, heatmap item index 4)
+  if (menuBar) {
+    menuBar->SetItemChecked(0, 4, heatmapEnabled_);
+  }
+}
+
+SDL_Color GameEngine::GetHeatmapColor(float score) const {
+  // Clamp to [0, 1]
+  if (score < 0.0f) score = 0.0f;
+  if (score > 1.0f) score = 1.0f;
+
+  // Color gradient: dim gray (0.0) → yellow (0.5) → red (1.0)
+  uint8_t r, g, b;
+  if (score < 0.5f) {
+    // Gray to yellow: (80,80,80) → (255,220,50)
+    float t = score * 2.0f;
+    r = static_cast<uint8_t>(80 + t * (255 - 80));
+    g = static_cast<uint8_t>(80 + t * (220 - 80));
+    b = static_cast<uint8_t>(80 + t * (50 - 80));
+  } else {
+    // Yellow to red: (255,220,50) → (255,50,30)
+    float t = (score - 0.5f) * 2.0f;
+    r = 255;
+    g = static_cast<uint8_t>(220 + t * (50 - 220));
+    b = static_cast<uint8_t>(50 + t * (30 - 50));
+  }
+
+  return {r, g, b, 255};
+}
+
+void GameEngine::CalculateHeatmap() {
+  size_t n = nodes.size();
+  nodeHeatmapScores_.assign(n, 0.0f);
+
+  if (intersectionCount == 0 || n == 0)
+    return;
+
+  // Coarse grid for fast evaluation
+  const float gridSpacing = 120.0f;
+  const float margin = 60.0f;
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  std::vector<int> bestReduction(n, 0);
+  int globalMaxReduction = 0;
+
+  for (size_t i = 0; i < n; ++i) {
+    Vec2 originalPos = nodes[i].position;
+    int currentCount = intersectionCount;
+    int nodeBest = 0;
+
+    // Test coarse grid positions
+    for (float x = margin; x <= winW - margin; x += gridSpacing) {
+      for (float y = margin; y <= winH - margin; y += gridSpacing) {
+        nodes[i].position = Vec2(x, y);
+        int newCount = CountIntersections(nodes, edges);
+        int reduction = currentCount - newCount;
+        if (reduction > nodeBest) {
+          nodeBest = reduction;
+        }
+      }
+    }
+
+    // Also test centroid of neighbors
+    if (!nodes[i].adjacencyList.empty()) {
+      Vec2 centroid(0, 0);
+      for (int neighbor : nodes[i].adjacencyList) {
+        if (neighbor >= 0 && neighbor < static_cast<int>(n)) {
+          centroid = centroid + nodes[neighbor].position;
+        }
+      }
+      centroid =
+          centroid * (1.0f / static_cast<float>(nodes[i].adjacencyList.size()));
+      nodes[i].position = centroid;
+      int newCount = CountIntersections(nodes, edges);
+      int reduction = currentCount - newCount;
+      if (reduction > nodeBest) {
+        nodeBest = reduction;
+      }
+    }
+
+    // Restore original position
+    nodes[i].position = originalPos;
+    bestReduction[i] = nodeBest;
+    if (nodeBest > globalMaxReduction) {
+      globalMaxReduction = nodeBest;
+    }
+  }
+
+  // Normalize scores to [0, 1]
+  if (globalMaxReduction > 0) {
+    for (size_t i = 0; i < n; ++i) {
+      nodeHeatmapScores_[i] =
+          static_cast<float>(bestReduction[i]) / globalMaxReduction;
+    }
+  }
+}
+
+void GameEngine::RenderHeatmapLegend() {
+  if (!heatmapEnabled_ || currentPhase != GamePhase::PLAYING)
+    return;
+
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  // Legend position: bottom-left corner
+  int legendW = 160;
+  int legendH = 70;
+  int legendX = 10;
+  int legendY = winH - legendH - 60; // Above scoreboard area
+
+  // Background
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(renderer, 25, 25, 30, 200);
+  SDL_Rect bg = {legendX, legendY, legendW, legendH};
+  SDL_RenderFillRect(renderer, &bg);
+
+  SDL_SetRenderDrawColor(renderer, 100, 100, 105, 255);
+  SDL_RenderDrawRect(renderer, &bg);
+
+  // Title
+  if (menuBar) {
+    SDL_Rect titleRect = {legendX + 5, legendY + 4, legendW - 10, 16};
+    menuBar->RenderTextCentered("Impact Heatmap", titleRect,
+                                {200, 200, 210, 255});
+  }
+
+  // Draw gradient bar
+  int barX = legendX + 12;
+  int barY = legendY + 24;
+  int barW = legendW - 24;
+  int barH = 14;
+
+  for (int px = 0; px < barW; ++px) {
+    float score = static_cast<float>(px) / barW;
+    SDL_Color c = GetHeatmapColor(score);
+    SDL_SetRenderDrawColor(renderer, c.r, c.g, c.b, 255);
+    SDL_RenderDrawLine(renderer, barX + px, barY, barX + px, barY + barH);
+  }
+
+  // Border around gradient
+  SDL_SetRenderDrawColor(renderer, 150, 150, 155, 255);
+  SDL_Rect barRect = {barX, barY, barW, barH};
+  SDL_RenderDrawRect(renderer, &barRect);
+
+  // Labels
+  if (menuBar) {
+    SDL_Rect lowRect = {legendX + 5, legendY + 44, 50, 16};
+    menuBar->RenderTextCentered("Low", lowRect, {120, 120, 125, 255});
+
+    SDL_Rect highRect = {legendX + legendW - 55, legendY + 44, 50, 16};
+    menuBar->RenderTextCentered("High", highRect, {255, 80, 60, 255});
+
+    SDL_Rect hintRect = {legendX + 50, legendY + 44, 60, 16};
+    menuBar->RenderTextCentered("[H]", hintRect, {100, 100, 105, 255});
   }
 }
 
