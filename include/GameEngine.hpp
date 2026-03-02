@@ -177,6 +177,7 @@ private:
   std::vector<BenchmarkResult> benchmarkResults_;
   static constexpr int BENCHMARK_MAX_MOVES = 100;
   static constexpr float BENCHMARK_MAX_TIME = 30.0f; // seconds per solver
+  bool benchmarkShowPlot_ = false; // Toggle between cards and convergence plot
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -355,6 +356,9 @@ private:
   void RunBenchmark();              // Run all 3 solvers on same graph, store results
   void RenderBenchmarkResults();    // Render comparison dashboard
   void HandleBenchmarkInput(const SDL_Event &event); // Handle dashboard clicks
+
+  // Convergence Plot (Feature 2)
+  void RenderConvergencePlot();     // Draw intersections vs. moves line chart
 };
 
 } // namespace GreedyTangle

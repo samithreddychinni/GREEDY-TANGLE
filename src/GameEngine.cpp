@@ -2843,7 +2843,11 @@ void GameEngine::RunBenchmark() {
 
 void GameEngine::HandleBenchmarkInput(const SDL_Event &event) {
   if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
-    currentPhase = GamePhase::MAIN_MENU;
+    if (benchmarkShowPlot_) {
+      benchmarkShowPlot_ = false; // Go back to cards view
+    } else {
+      currentPhase = GamePhase::MAIN_MENU;
+    }
     return;
   }
 
@@ -2856,18 +2860,37 @@ void GameEngine::HandleBenchmarkInput(const SDL_Event &event) {
     int winW, winH;
     SDL_GetWindowSize(window, &winW, &winH);
 
-    // "Back to Menu" button
+    // "Back to Menu" button (on both views)
     SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
     if (SDL_PointInRect(&pt, &backBtn)) {
-      currentPhase = GamePhase::MAIN_MENU;
+      if (benchmarkShowPlot_) {
+        benchmarkShowPlot_ = false; // Go back to cards
+      } else {
+        currentPhase = GamePhase::MAIN_MENU;
+      }
       return;
     }
 
-    // "Re-run" button
-    SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
-    if (SDL_PointInRect(&pt, &rerunBtn)) {
-      RunBenchmark();
-      return;
+    if (!benchmarkShowPlot_) {
+      // Cards view buttons
+      // "View Plot" button
+      SDL_Rect plotBtn = {winW / 2 - 80, winH - 135, 160, 35};
+      if (SDL_PointInRect(&pt, &plotBtn)) {
+        benchmarkShowPlot_ = true;
+        return;
+      }
+
+      // "Re-run" button
+      SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
+      if (SDL_PointInRect(&pt, &rerunBtn)) {
+        benchmarkShowPlot_ = false;
+        RunBenchmark();
+        return;
+      }
+    } else {
+      // Plot view buttons
+      // "Back to Cards" button (at back position)
+      // Already handled by backBtn above
     }
   }
 }
@@ -2878,6 +2901,12 @@ void GameEngine::RenderBenchmarkResults() {
   int numSolvers = static_cast<int>(benchmarkResults_.size());
   if (numSolvers == 0)
     return;
+
+  // If showing convergence plot, delegate to that renderer
+  if (benchmarkShowPlot_) {
+    RenderConvergencePlot();
+    return;
+  }
 
   // Title
   DrawTextCentered(winW / 2, 55, "ALGORITHM COMPARISON",
@@ -3024,6 +3053,19 @@ void GameEngine::RenderBenchmarkResults() {
     }
   }
 
+  // View Convergence Plot button
+  {
+    SDL_Rect plotBtn = {winW / 2 - 80, winH - 135, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 40, 120, 80, 255);
+    SDL_RenderFillRect(renderer, &plotBtn);
+    SDL_SetRenderDrawColor(renderer, 80, 200, 120, 255);
+    SDL_RenderDrawRect(renderer, &plotBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("View Plot", plotBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+
   // Re-run button
   {
     SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
@@ -3046,6 +3088,195 @@ void GameEngine::RenderBenchmarkResults() {
     SDL_RenderDrawRect(renderer, &backBtn);
     if (menuBar) {
       menuBar->RenderTextCentered("Back to Menu", backBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+}
+
+// ============== CONVERGENCE PLOT (Feature 2) ==============
+
+void GameEngine::RenderConvergencePlot() {
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+  int numSolvers = static_cast<int>(benchmarkResults_.size());
+  if (numSolvers == 0)
+    return;
+
+  // Title
+  DrawTextCentered(winW / 2, 45, "CONVERGENCE PLOT",
+                   {231, 76, 60, 255}, 48);
+  DrawTextCentered(winW / 2, 75, "Intersections vs. Move Number",
+                   {180, 180, 185, 255}, 24);
+
+  // Chart area
+  int chartLeft = 80;
+  int chartTop = 100;
+  int chartRight = winW - 40;
+  int chartBottom = winH - 120;
+  int chartW = chartRight - chartLeft;
+  int chartH = chartBottom - chartTop;
+
+  // Chart background
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(renderer, 30, 30, 35, 230);
+  SDL_Rect chartBg = {chartLeft, chartTop, chartW, chartH};
+  SDL_RenderFillRect(renderer, &chartBg);
+  SDL_SetRenderDrawColor(renderer, 60, 60, 65, 255);
+  SDL_RenderDrawRect(renderer, &chartBg);
+
+  // Determine data ranges
+  int maxMoves = 0;
+  int maxIntersections = 0;
+  for (const auto &r : benchmarkResults_) {
+    int histSize = static_cast<int>(r.intersectionHistory.size());
+    if (histSize > maxMoves)
+      maxMoves = histSize;
+    for (int val : r.intersectionHistory) {
+      if (val > maxIntersections)
+        maxIntersections = val;
+    }
+  }
+
+  if (maxMoves <= 1 || maxIntersections == 0) {
+    DrawTextCentered(winW / 2, winH / 2, "No data to plot",
+                     {180, 180, 185, 255}, 24);
+    // Back button
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 180, 40, 40, 255);
+    SDL_RenderFillRect(renderer, &backBtn);
+    SDL_SetRenderDrawColor(renderer, 220, 80, 80, 255);
+    SDL_RenderDrawRect(renderer, &backBtn);
+    if (menuBar)
+      menuBar->RenderTextCentered("Back", backBtn, {255, 255, 255, 255});
+    return;
+  }
+
+  // Draw grid lines
+  int numGridY = 5;
+  for (int i = 0; i <= numGridY; ++i) {
+    int y = chartTop + (chartH * i) / numGridY;
+    SDL_SetRenderDrawColor(renderer, 45, 45, 50, 255);
+    SDL_RenderDrawLine(renderer, chartLeft, y, chartRight, y);
+
+    // Y-axis label
+    int val = maxIntersections - (maxIntersections * i) / numGridY;
+    if (menuBar) {
+      std::string label = std::to_string(val);
+      SDL_Rect labelRect = {chartLeft - 50, y - 8, 45, 16};
+      menuBar->RenderTextCentered(label, labelRect, {150, 150, 155, 255});
+    }
+  }
+
+  int numGridX = std::min(maxMoves - 1, 10);
+  if (numGridX > 0) {
+    for (int i = 0; i <= numGridX; ++i) {
+      int x = chartLeft + (chartW * i) / numGridX;
+      SDL_SetRenderDrawColor(renderer, 45, 45, 50, 255);
+      SDL_RenderDrawLine(renderer, x, chartTop, x, chartBottom);
+
+      // X-axis label
+      int val = ((maxMoves - 1) * i) / numGridX;
+      if (menuBar) {
+        std::string label = std::to_string(val);
+        SDL_Rect labelRect = {x - 15, chartBottom + 4, 30, 16};
+        menuBar->RenderTextCentered(label, labelRect, {150, 150, 155, 255});
+      }
+    }
+  }
+
+  // Axis labels
+  if (menuBar) {
+    SDL_Rect yLabel = {5, chartTop + chartH / 2 - 8, 60, 16};
+    menuBar->RenderTextCentered("Crossings", yLabel, {180, 180, 185, 255});
+
+    SDL_Rect xLabel = {chartLeft + chartW / 2 - 30, chartBottom + 22, 60, 16};
+    menuBar->RenderTextCentered("Moves", xLabel, {180, 180, 185, 255});
+  }
+
+  // Solver colors
+  SDL_Color solverColors[] = {
+      {50, 205, 50, 255},   // Greedy: green
+      {255, 165, 0, 255},   // Backtracking: orange
+      {100, 149, 237, 255}  // D&C+DP: blue
+  };
+
+  // Draw lines for each solver
+  for (int s = 0; s < numSolvers; ++s) {
+    const auto &hist = benchmarkResults_[s].intersectionHistory;
+    if (hist.size() < 2)
+      continue;
+
+    SDL_Color color = solverColors[s % 3];
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+
+    for (size_t i = 1; i < hist.size(); ++i) {
+      // Map data point to pixel coordinates
+      float x1Frac = static_cast<float>(i - 1) / (maxMoves - 1);
+      float y1Frac = 1.0f - static_cast<float>(hist[i - 1]) / maxIntersections;
+      float x2Frac = static_cast<float>(i) / (maxMoves - 1);
+      float y2Frac = 1.0f - static_cast<float>(hist[i]) / maxIntersections;
+
+      int px1 = chartLeft + static_cast<int>(x1Frac * chartW);
+      int py1 = chartTop + static_cast<int>(y1Frac * chartH);
+      int px2 = chartLeft + static_cast<int>(x2Frac * chartW);
+      int py2 = chartTop + static_cast<int>(y2Frac * chartH);
+
+      // Draw thick line (3 parallel lines)
+      SDL_RenderDrawLine(renderer, px1, py1, px2, py2);
+      SDL_RenderDrawLine(renderer, px1, py1 - 1, px2, py2 - 1);
+      SDL_RenderDrawLine(renderer, px1, py1 + 1, px2, py2 + 1);
+    }
+
+    // Draw data points as small circles
+    for (size_t i = 0; i < hist.size(); ++i) {
+      float xFrac = static_cast<float>(i) / (maxMoves - 1);
+      float yFrac = 1.0f - static_cast<float>(hist[i]) / maxIntersections;
+      int px = chartLeft + static_cast<int>(xFrac * chartW);
+      int py = chartTop + static_cast<int>(yFrac * chartH);
+
+      // Small filled circle (radius 3)
+      for (int dy = -3; dy <= 3; ++dy) {
+        int halfW = static_cast<int>(std::sqrt(9 - dy * dy));
+        SDL_RenderDrawLine(renderer, px - halfW, py + dy, px + halfW, py + dy);
+      }
+    }
+  }
+
+  // Legend
+  int legendX = chartRight - 200;
+  int legendY = chartTop + 10;
+  SDL_SetRenderDrawColor(renderer, 25, 25, 30, 220);
+  SDL_Rect legendBg = {legendX, legendY, 190, 20 * numSolvers + 10};
+  SDL_RenderFillRect(renderer, &legendBg);
+  SDL_SetRenderDrawColor(renderer, 80, 80, 85, 255);
+  SDL_RenderDrawRect(renderer, &legendBg);
+
+  for (int s = 0; s < numSolvers; ++s) {
+    SDL_Color color = solverColors[s % 3];
+    int ly = legendY + 5 + s * 20;
+
+    // Color swatch
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
+    SDL_Rect swatch = {legendX + 8, ly + 2, 20, 12};
+    SDL_RenderFillRect(renderer, &swatch);
+
+    // Solver name
+    if (menuBar) {
+      SDL_Rect nameRect = {legendX + 35, ly, 145, 16};
+      menuBar->RenderTextCentered(benchmarkResults_[s].solverName, nameRect,
+                                  {220, 220, 225, 255});
+    }
+  }
+
+  // Back to Cards button
+  {
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+    SDL_RenderFillRect(renderer, &backBtn);
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_RenderDrawRect(renderer, &backBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Back to Cards", backBtn,
                                   {255, 255, 255, 255});
     }
   }
