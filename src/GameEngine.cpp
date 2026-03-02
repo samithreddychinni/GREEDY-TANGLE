@@ -306,6 +306,13 @@ void GameEngine::HandleInput() {
       case SDLK_h:
         ToggleHeatmap();
         break;
+      case SDLK_s:
+        if (autoSolveActive_) {
+          autoSolveActive_ = false;
+          autoSolveAnimating_ = false;
+          currentPhase = GamePhase::GAME_ENDED;
+        }
+        break;
       }
       break;
 
@@ -2488,9 +2495,9 @@ void GameEngine::ReplayGoToStep(int step) {
   replayNodes_.resize(initialPositions.size());
   for (size_t i = 0; i < initialPositions.size(); ++i) {
     replayNodes_[i] = Node(static_cast<int>(i), initialPositions[i]);
-    replayNodes_[i].adjacencyList = nodes.empty()
-                                        ? std::vector<int>{}
-                                        : cpuNodes_[i].adjacencyList;
+    if (i < nodes.size()) {
+       replayNodes_[i].adjacencyList = nodes[i].adjacencyList;
+    }
   }
 
   // Apply moves 1..step
@@ -2997,7 +3004,7 @@ void GameEngine::HandleBenchmarkInput(const SDL_Event &event) {
       SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
       if (SDL_PointInRect(&pt, &rerunBtn)) {
         benchmarkShowPlot_ = false;
-        RunBenchmark();
+        StartComputingBenchmark();
         return;
       }
     } else {
@@ -3550,7 +3557,7 @@ void GameEngine::HandleScalabilityInput(const SDL_Event &event) {
     // "Re-run" button
     SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
     if (SDL_PointInRect(&pt, &rerunBtn)) {
-      RunScalabilityTest();
+      StartComputingScalability();
       return;
     }
   }
@@ -3985,7 +3992,7 @@ void GameEngine::RenderHowItWorks() {
 
     renderSectionHeader(y, "Time Complexity (How it scales)");
     y += lineHeight + 4;
-    renderLine(y, "O(N^2 * C) per move  --  N = nodes, C = candidate positions", white);
+    renderLine(y, "O(V^2 * C) per move  --  V = vertices (nodes), C = candidate positions", white);
     y += lineHeight;
     renderLine(y, "In plain English: If you double the nodes, it takes ~4x longer per move.", highlight);
     y += lineHeight;
@@ -4031,9 +4038,9 @@ void GameEngine::RenderHowItWorks() {
 
     renderSectionHeader(y, "Time Complexity (How it scales)");
     y += lineHeight + 4;
-    renderLine(y, "O((N * C)^D) per move  --  D = depth limit (3)", white);
+    renderLine(y, "O((V * C)^D) per move  --  D = depth limit (3)", white);
     y += lineHeight;
-    renderLine(y, "In plain English: Time EXPLODES as nodes increase. 10 nodes is fine,", highlight);
+    renderLine(y, "In plain English: Time EXPLODES as vertices increase. 10 nodes is fine,", highlight);
     y += lineHeight;
     renderLine(y, "30 nodes is slow, 50+ nodes might take minutes per move.", highlight);
 
@@ -4077,11 +4084,13 @@ void GameEngine::RenderHowItWorks() {
 
     renderSectionHeader(y, "Time Complexity (How it scales)");
     y += lineHeight + 4;
-    renderLine(y, "O(N log N * C) per move  --  splits problem logarithmically", white);
+    renderLine(y, "O(V log V * C + E) per move  --  V = vertices, E = edges, C = candidates", white);
     y += lineHeight;
-    renderLine(y, "In plain English: Scales much better than backtracking.", highlight);
+    renderLine(y, "In plain English: Splitting problem logarithmically is much faster than", highlight);
     y += lineHeight;
-    renderLine(y, "Doubling nodes only adds a small constant, not a multiplier.", highlight);
+    renderLine(y, "Backtracking. K-degree sorting and DP State Tracking helps speed", dim);
+    y += lineHeight;
+    renderLine(y, "up finding the minimum intersections per region (T = tracking overhead).", dim);
   }
 
   // Keyboard hint
