@@ -132,6 +132,15 @@ void GameEngine::HandleInput() {
       continue;
     }
 
+    // Replay viewer has its own input handling
+    if (currentPhase == GamePhase::REPLAY_VIEWER) {
+      if (event.type == SDL_QUIT) {
+        isRunning = false;
+      }
+      HandleReplayInput(event);
+      continue;
+    }
+
     switch (event.type) {
     case SDL_QUIT:
       isRunning = false;
@@ -347,6 +356,15 @@ void GameEngine::Render() {
 
   if (currentPhase == GamePhase::MAIN_MENU) {
     RenderHomeScreen();
+    SDL_RenderPresent(renderer);
+    return;
+  }
+
+  if (currentPhase == GamePhase::REPLAY_VIEWER) {
+    RenderReplayViewer();
+    if (menuBar) {
+      menuBar->Render();
+    }
     SDL_RenderPresent(renderer);
     return;
   }
@@ -994,6 +1012,23 @@ void GameEngine::UpdatePhase() {
   case GamePhase::GAME_ENDED:
     // Stay on game ended screen until player starts new game
     break;
+
+  case GamePhase::REPLAY_VIEWER:
+    // Auto-play: advance step periodically
+    if (replayPlaying_ && cpuReplayLogger_ &&
+        replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
+      auto now = std::chrono::steady_clock::now();
+      float elapsed =
+          std::chrono::duration<float>(now - replayLastStepTime_).count();
+      if (elapsed >= REPLAY_STEP_INTERVAL) {
+        ReplayGoToStep(replayCurrentStep_ + 1);
+        replayLastStepTime_ = now;
+      }
+    } else if (replayPlaying_ && cpuReplayLogger_ &&
+               replayCurrentStep_ >= cpuReplayLogger_->GetTotalMoves()) {
+      replayPlaying_ = false; // Stop at end
+    }
+    break;
   }
 }
 
@@ -1010,6 +1045,7 @@ void GameEngine::SetupMenus() {
       MenuItem(
           "Toggle Heatmap (H)", [this]() { ToggleHeatmap(); }, true,
           heatmapEnabled_),
+      MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
       MenuItem(), // Separator
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
@@ -2272,6 +2308,401 @@ void GameEngine::RenderHeatmapLegend() {
 
     SDL_Rect hintRect = {legendX + 50, legendY + 44, 60, 16};
     menuBar->RenderTextCentered("[H]", hintRect, {100, 100, 105, 255});
+  }
+}
+
+// ============== STEP-BY-STEP REPLAY VIEWER (Feature 4) ==============
+
+void GameEngine::StartReplayViewer() {
+  if (!cpuReplayLogger_ || cpuReplayLogger_->GetTotalMoves() == 0) {
+    std::cout << "[Replay] No replay data available. Play a game first."
+              << std::endl;
+    return;
+  }
+
+  // Wait for any in-flight CPU task
+  if (cpuSolving_ && cpuFuture_.valid()) {
+    cpuFuture_.wait();
+    cpuSolving_ = false;
+  }
+
+  currentPhase = GamePhase::REPLAY_VIEWER;
+  replayCurrentStep_ = 0;
+  replayPlaying_ = false;
+
+  // Build initial graph state from replay logger
+  const auto &initialPositions = cpuReplayLogger_->GetInitialPositions();
+  replayNodes_.resize(initialPositions.size());
+  for (size_t i = 0; i < initialPositions.size(); ++i) {
+    replayNodes_[i] = Node(static_cast<int>(i), initialPositions[i]);
+  }
+
+  std::cout << "[Replay] Entering replay viewer. Total moves: "
+            << cpuReplayLogger_->GetTotalMoves() << std::endl;
+}
+
+void GameEngine::ReplayGoToStep(int step) {
+  if (!cpuReplayLogger_)
+    return;
+
+  int totalMoves = cpuReplayLogger_->GetTotalMoves();
+  if (step < 0)
+    step = 0;
+  if (step > totalMoves)
+    step = totalMoves;
+
+  // Rebuild graph state from initial positions up to the given step
+  const auto &initialPositions = cpuReplayLogger_->GetInitialPositions();
+  replayNodes_.resize(initialPositions.size());
+  for (size_t i = 0; i < initialPositions.size(); ++i) {
+    replayNodes_[i] = Node(static_cast<int>(i), initialPositions[i]);
+    replayNodes_[i].adjacencyList = nodes.empty()
+                                        ? std::vector<int>{}
+                                        : cpuNodes_[i].adjacencyList;
+  }
+
+  // Apply moves 1..step
+  for (int s = 1; s <= step; ++s) {
+    const CPUMove &move = cpuReplayLogger_->GetMoveAt(s);
+    if (move.isValid() &&
+        move.node_id < static_cast<int>(replayNodes_.size())) {
+      replayNodes_[move.node_id].position = move.to_position;
+    }
+  }
+
+  replayCurrentStep_ = step;
+}
+
+void GameEngine::HandleReplayInput(const SDL_Event &event) {
+  if (event.type == SDL_KEYDOWN) {
+    switch (event.key.keysym.sym) {
+    case SDLK_ESCAPE:
+      // Return to main menu
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    case SDLK_RIGHT:
+      if (cpuReplayLogger_ &&
+          replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
+        ReplayGoToStep(replayCurrentStep_ + 1);
+      }
+      return;
+    case SDLK_LEFT:
+      if (replayCurrentStep_ > 0) {
+        ReplayGoToStep(replayCurrentStep_ - 1);
+      }
+      return;
+    case SDLK_SPACE:
+      replayPlaying_ = !replayPlaying_;
+      replayLastStepTime_ = std::chrono::steady_clock::now();
+      return;
+    }
+  }
+
+  if (event.type == SDL_MOUSEBUTTONDOWN &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    int mx = event.button.x;
+    int my = event.button.y;
+    SDL_Point pt = {mx, my};
+
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+
+    // Control buttons at the bottom
+    int btnW = 90;
+    int btnH = 35;
+    int btnY = winH - 60;
+    int cx = winW / 2;
+
+    // Back button
+    SDL_Rect backBtn = {cx - btnW * 2 - 15, btnY, btnW, btnH};
+    if (SDL_PointInRect(&pt, &backBtn) && replayCurrentStep_ > 0) {
+      ReplayGoToStep(replayCurrentStep_ - 1);
+      replayPlaying_ = false;
+      return;
+    }
+
+    // Play/Pause button
+    SDL_Rect playBtn = {cx - btnW / 2, btnY, btnW, btnH};
+    if (SDL_PointInRect(&pt, &playBtn)) {
+      replayPlaying_ = !replayPlaying_;
+      replayLastStepTime_ = std::chrono::steady_clock::now();
+      return;
+    }
+
+    // Next button
+    SDL_Rect nextBtn = {cx + btnW + 15, btnY, btnW, btnH};
+    if (SDL_PointInRect(&pt, &nextBtn) && cpuReplayLogger_ &&
+        replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
+      ReplayGoToStep(replayCurrentStep_ + 1);
+      replayPlaying_ = false;
+      return;
+    }
+
+    // Exit button
+    SDL_Rect exitBtn = {winW - 110, btnY, 100, btnH};
+    if (SDL_PointInRect(&pt, &exitBtn)) {
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    }
+  }
+}
+
+void GameEngine::RenderReplayViewer() {
+  if (!cpuReplayLogger_)
+    return;
+
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+  int totalMoves = cpuReplayLogger_->GetTotalMoves();
+
+  // Draw edges using replay node positions
+  for (const Edge &edge : edges) {
+    if (edge.u_id < 0 ||
+        edge.u_id >= static_cast<int>(replayNodes_.size()) ||
+        edge.v_id < 0 || edge.v_id >= static_cast<int>(replayNodes_.size()))
+      continue;
+
+    const Vec2 &p1 = replayNodes_[edge.u_id].position;
+    const Vec2 &p2 = replayNodes_[edge.v_id].position;
+
+    // Check intersection for this edge
+    bool isIntersecting = false;
+    for (const Edge &other : edges) {
+      if (edge.sharesVertex(other))
+        continue;
+      if (other.u_id < 0 ||
+          other.u_id >= static_cast<int>(replayNodes_.size()) ||
+          other.v_id < 0 ||
+          other.v_id >= static_cast<int>(replayNodes_.size()))
+        continue;
+      const Vec2 &p3 = replayNodes_[other.u_id].position;
+      const Vec2 &p4 = replayNodes_[other.v_id].position;
+      if (CheckIntersection(p1, p2, p3, p4)) {
+        isIntersecting = true;
+        break;
+      }
+    }
+
+    SDL_Color color = isIntersecting ? Colors::EDGE_CRITICAL : Colors::EDGE_SAFE;
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderDrawLine(renderer, static_cast<int>(p1.x),
+                       static_cast<int>(p1.y), static_cast<int>(p2.x),
+                       static_cast<int>(p2.y));
+  }
+
+  // Draw nodes - highlight the moved node at current step
+  int movedNodeId = -1;
+  if (replayCurrentStep_ > 0 && replayCurrentStep_ <= totalMoves) {
+    movedNodeId = cpuReplayLogger_->GetMoveAt(replayCurrentStep_).node_id;
+  }
+
+  for (const Node &node : replayNodes_) {
+    int cx = static_cast<int>(node.position.x);
+    int cy = static_cast<int>(node.position.y);
+    int r = static_cast<int>(node.radius);
+
+    SDL_Color fillColor;
+    if (node.id == movedNodeId) {
+      fillColor = {255, 200, 50, 255}; // Gold for the moved node
+    } else {
+      fillColor = Colors::NODE_FILL;
+    }
+
+    SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b,
+                           fillColor.a);
+    DrawFilledCircle(cx, cy, r);
+
+    // Border
+    SDL_Color borderColor =
+        (node.id == movedNodeId) ? SDL_Color{255, 255, 255, 255}
+                                 : Colors::NODE_BORDER;
+    SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g,
+                           borderColor.b, borderColor.a);
+    int bx = r, by = 0;
+    int radiusError = 1 - bx;
+    while (bx >= by) {
+      SDL_RenderDrawPoint(renderer, cx + bx, cy + by);
+      SDL_RenderDrawPoint(renderer, cx + by, cy + bx);
+      SDL_RenderDrawPoint(renderer, cx - by, cy + bx);
+      SDL_RenderDrawPoint(renderer, cx - bx, cy + by);
+      SDL_RenderDrawPoint(renderer, cx - bx, cy - by);
+      SDL_RenderDrawPoint(renderer, cx - by, cy - bx);
+      SDL_RenderDrawPoint(renderer, cx + by, cy - bx);
+      SDL_RenderDrawPoint(renderer, cx + bx, cy - by);
+      ++by;
+      if (radiusError < 0) {
+        radiusError += 2 * by + 1;
+      } else {
+        --bx;
+        radiusError += 2 * (by - bx + 1);
+      }
+    }
+  }
+
+  // === Move Annotation Panel (right side) ===
+  int panelW = 260;
+  int panelH = 180;
+  int panelX = winW - panelW - 10;
+  int panelY = MenuBar::BAR_HEIGHT + 10;
+
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(renderer, 25, 25, 30, 220);
+  SDL_Rect panel = {panelX, panelY, panelW, panelH};
+  SDL_RenderFillRect(renderer, &panel);
+
+  SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+  SDL_RenderDrawRect(renderer, &panel);
+
+  if (menuBar) {
+    // Title
+    SDL_Rect titleRect = {panelX + 1, panelY + 1, panelW - 2, 24};
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 60);
+    SDL_RenderFillRect(renderer, &titleRect);
+
+    std::string titleText = "Step " + std::to_string(replayCurrentStep_) +
+                            " / " + std::to_string(totalMoves);
+    menuBar->RenderTextCentered(titleText, titleRect, {255, 255, 255, 255});
+
+    int textY = panelY + 32;
+
+    if (replayCurrentStep_ == 0) {
+      // Initial state
+      SDL_Rect initRect = {panelX + 10, textY, panelW - 20, 18};
+      menuBar->RenderTextCentered("Initial State", initRect,
+                                  {180, 180, 185, 255});
+      textY += 24;
+
+      std::string intStr = "Intersections: " +
+                           std::to_string(cpuReplayLogger_->GetInitialIntersections());
+      SDL_Rect intRect = {panelX + 10, textY, panelW - 20, 18};
+      menuBar->RenderTextCentered(intStr, intRect, {200, 200, 210, 255});
+    } else {
+      const CPUMove &move = cpuReplayLogger_->GetMoveAt(replayCurrentStep_);
+
+      // Node info
+      std::ostringstream nodeStr;
+      nodeStr << "Node " << move.node_id;
+      SDL_Rect nodeRect = {panelX + 10, textY, panelW - 20, 18};
+      menuBar->RenderTextCentered(nodeStr.str(), nodeRect,
+                                  {255, 200, 50, 255});
+      textY += 22;
+
+      // Position change
+      std::ostringstream posStr;
+      posStr << std::fixed << std::setprecision(0) << "(" << move.from_position.x
+             << "," << move.from_position.y << ") -> ("
+             << move.to_position.x << "," << move.to_position.y << ")";
+      SDL_Rect posRect = {panelX + 5, textY, panelW - 10, 16};
+      menuBar->RenderTextCentered(posStr.str(), posRect,
+                                  {200, 200, 210, 255});
+      textY += 22;
+
+      // Intersection change
+      std::ostringstream intStr;
+      intStr << "Intersections: " << move.intersections_before << " -> "
+             << move.intersections_after << " (-"
+             << move.intersection_reduction << ")";
+      SDL_Rect intRect = {panelX + 5, textY, panelW - 10, 16};
+      SDL_Color intColor = move.intersection_reduction > 0
+                               ? SDL_Color{50, 205, 50, 255}
+                               : SDL_Color{200, 200, 210, 255};
+      menuBar->RenderTextCentered(intStr.str(), intRect, intColor);
+      textY += 22;
+
+      // Computation time
+      std::string timeStr =
+          "Time: " + std::to_string(move.computation_time_ms) + "ms";
+      SDL_Rect timeRect = {panelX + 10, textY, panelW - 20, 16};
+      menuBar->RenderTextCentered(timeStr, timeRect, {150, 150, 155, 255});
+    }
+  }
+
+  // === Progress bar ===
+  int barX = 20;
+  int barY = winH - 100;
+  int barW = winW - 40;
+  int barH = 8;
+
+  SDL_SetRenderDrawColor(renderer, 50, 50, 55, 255);
+  SDL_Rect barBg = {barX, barY, barW, barH};
+  SDL_RenderFillRect(renderer, &barBg);
+
+  if (totalMoves > 0) {
+    int fillW = static_cast<int>(
+        barW * (static_cast<float>(replayCurrentStep_) / totalMoves));
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_Rect barFill = {barX, barY, fillW, barH};
+    SDL_RenderFillRect(renderer, &barFill);
+  }
+
+  SDL_SetRenderDrawColor(renderer, 100, 100, 105, 255);
+  SDL_RenderDrawRect(renderer, &barBg);
+
+  // === Control buttons ===
+  int btnW = 90;
+  int btnH = 35;
+  int btnY = winH - 60;
+  int centerX = winW / 2;
+
+  // Back button
+  SDL_Rect backBtn = {centerX - btnW * 2 - 15, btnY, btnW, btnH};
+  bool canGoBack = replayCurrentStep_ > 0;
+  SDL_Color backBg = canGoBack ? SDL_Color{44, 62, 80, 255}
+                               : SDL_Color{30, 30, 35, 255};
+  SDL_SetRenderDrawColor(renderer, backBg.r, backBg.g, backBg.b, backBg.a);
+  SDL_RenderFillRect(renderer, &backBtn);
+  SDL_SetRenderDrawColor(renderer, 100, 100, 105, 255);
+  SDL_RenderDrawRect(renderer, &backBtn);
+  if (menuBar) {
+    SDL_Color textCol = canGoBack ? SDL_Color{255, 255, 255, 255}
+                                  : SDL_Color{80, 80, 85, 255};
+    menuBar->RenderTextCentered("<< Back", backBtn, textCol);
+  }
+
+  // Play/Pause button
+  SDL_Rect playBtn = {centerX - btnW / 2, btnY, btnW, btnH};
+  SDL_Color playBg =
+      replayPlaying_ ? SDL_Color{180, 40, 40, 255} : SDL_Color{40, 160, 80, 255};
+  SDL_SetRenderDrawColor(renderer, playBg.r, playBg.g, playBg.b, playBg.a);
+  SDL_RenderFillRect(renderer, &playBtn);
+  SDL_SetRenderDrawColor(renderer, 100, 100, 105, 255);
+  SDL_RenderDrawRect(renderer, &playBtn);
+  if (menuBar) {
+    std::string playText = replayPlaying_ ? "Pause" : "Play";
+    menuBar->RenderTextCentered(playText, playBtn, {255, 255, 255, 255});
+  }
+
+  // Next button
+  SDL_Rect nextBtn = {centerX + btnW + 15, btnY, btnW, btnH};
+  bool canGoNext = cpuReplayLogger_ &&
+                   replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves();
+  SDL_Color nextBg = canGoNext ? SDL_Color{44, 62, 80, 255}
+                               : SDL_Color{30, 30, 35, 255};
+  SDL_SetRenderDrawColor(renderer, nextBg.r, nextBg.g, nextBg.b, nextBg.a);
+  SDL_RenderFillRect(renderer, &nextBtn);
+  SDL_SetRenderDrawColor(renderer, 100, 100, 105, 255);
+  SDL_RenderDrawRect(renderer, &nextBtn);
+  if (menuBar) {
+    SDL_Color textCol = canGoNext ? SDL_Color{255, 255, 255, 255}
+                                  : SDL_Color{80, 80, 85, 255};
+    menuBar->RenderTextCentered("Next >>", nextBtn, textCol);
+  }
+
+  // Exit button
+  SDL_Rect exitBtn = {winW - 110, btnY, 100, btnH};
+  SDL_SetRenderDrawColor(renderer, 180, 40, 40, 255);
+  SDL_RenderFillRect(renderer, &exitBtn);
+  SDL_SetRenderDrawColor(renderer, 220, 80, 80, 255);
+  SDL_RenderDrawRect(renderer, &exitBtn);
+  if (menuBar) {
+    menuBar->RenderTextCentered("Exit", exitBtn, {255, 255, 255, 255});
+  }
+
+  // Keyboard hint
+  if (menuBar) {
+    SDL_Rect hintRect = {10, btnY + 5, 200, 20};
+    menuBar->RenderTextCentered("Arrow keys / Space", hintRect,
+                                {100, 100, 105, 255});
   }
 }
 

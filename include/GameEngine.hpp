@@ -44,13 +44,14 @@ public:
 
   // Game phases for animated graph initialization
   enum class GamePhase {
-    MAIN_MENU,         
+    MAIN_MENU,
     SHOWING_UNTANGLED, // Display clean planar layout
     TANGLING,          // Animate nodes to tangled positions
     PLAYING,           // Human plays, CPU solves in background (RACE MODE)
     VICTORY_BLINK,     // Flash animation on win
     VICTORY,           // Show analytics screen
-    GAME_ENDED         // Player ended game early - "You Lost"
+    GAME_ENDED,        // Player ended game early - "You Lost"
+    REPLAY_VIEWER      // Step-by-step algorithm replay
   };
 
   // Difficulty levels
@@ -153,6 +154,13 @@ private:
   std::vector<float> nodeHeatmapScores_; // Normalized 0.0-1.0 per node
   std::chrono::steady_clock::time_point heatmapLastUpdate_;
   static constexpr float HEATMAP_UPDATE_INTERVAL = 1.5f; // Recalc every 1.5s
+
+  // Step-by-Step Replay Viewer (Feature 4)
+  int replayCurrentStep_ = 0;        // 0 = initial state, 1..N = after move N
+  bool replayPlaying_ = false;       // Auto-play mode
+  std::vector<Node> replayNodes_;    // Graph state for replay rendering
+  std::chrono::steady_clock::time_point replayLastStepTime_;
+  static constexpr float REPLAY_STEP_INTERVAL = 0.8f; // Auto-play speed
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -320,6 +328,12 @@ private:
   void RenderHeatmapLegend();  // Draw color legend on screen
   void ToggleHeatmap();        // Toggle heatmap on/off
   SDL_Color GetHeatmapColor(float score) const; // Map score to color
+
+  // Step-by-Step Replay Viewer (Feature 4)
+  void StartReplayViewer();    // Enter replay mode from recorded CPU data
+  void RenderReplayViewer();   // Render replay screen with controls and annotations
+  void HandleReplayInput(const SDL_Event &event); // Handle replay button clicks
+  void ReplayGoToStep(int step); // Update graph state for a specific step
 };
 
 } // namespace GreedyTangle
