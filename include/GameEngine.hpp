@@ -305,6 +305,9 @@ private:
 
   // End Game / Pause CPU
   void RenderGameEndedScreen(); // Draw "Game Ended - You Lost" overlay
+
+  // Algorithm Description Panel (Feature 6)
+  void RenderAlgorithmPanel(); // Draw solver info panel during gameplay
 };
 
 } // namespace GreedyTangle

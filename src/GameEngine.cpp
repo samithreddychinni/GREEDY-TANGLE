@@ -364,6 +364,9 @@ void GameEngine::Render() {
   // Render live scoreboard during gameplay
   RenderScoreboard();
 
+  // Render algorithm description panel during gameplay
+  RenderAlgorithmPanel();
+
   SDL_RenderPresent(renderer);
 }
 
@@ -1960,6 +1963,119 @@ void GameEngine::HandleHomeScreenInput(const SDL_Event &event) {
       
       phaseStartTime = std::chrono::steady_clock::now();
     }
+  }
+}
+
+// ============== ALGORITHM DESCRIPTION PANEL (Feature 6) ==============
+
+void GameEngine::RenderAlgorithmPanel() {
+  if (currentPhase != GamePhase::PLAYING)
+    return;
+
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  // Panel dimensions and position (right side of screen)
+  int panelW = 220;
+  int panelH = 200;
+  int panelX = winW - panelW - 10;
+  int panelY = MenuBar::BAR_HEIGHT + 10;
+
+  // Semi-transparent background
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(renderer, 25, 25, 30, 200);
+  SDL_Rect panel = {panelX, panelY, panelW, panelH};
+  SDL_RenderFillRect(renderer, &panel);
+
+  // Border color based on solver
+  SDL_Color borderColor;
+  std::string solverName;
+  std::string strategyLine1;
+  std::string strategyLine2;
+  std::string complexityLine;
+
+  switch (currentMode) {
+  case GameMode::GREEDY:
+    borderColor = {50, 205, 50, 255}; // Green
+    solverName = "Greedy Solver";
+    strategyLine1 = "Picks the move that";
+    strategyLine2 = "maximally reduces crossings.";
+    complexityLine = "O(N * C) per step";
+    break;
+  case GameMode::BACKTRACKING:
+    borderColor = {255, 165, 0, 255}; // Orange
+    solverName = "Backtracking Solver";
+    strategyLine1 = "Explores move sequences";
+    strategyLine2 = "up to depth 3, backtracks.";
+    complexityLine = "Exponential worst case";
+    break;
+  case GameMode::DIVIDE_AND_CONQUER_DP:
+    borderColor = {100, 149, 237, 255}; // Cornflower blue
+    solverName = "D&C + DP Solver";
+    strategyLine1 = "Spatially partitions graph,";
+    strategyLine2 = "solves sub-regions with DP.";
+    complexityLine = "O(P * K^2) per partition";
+    break;
+  }
+
+  SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g, borderColor.b,
+                         borderColor.a);
+  SDL_RenderDrawRect(renderer, &panel);
+
+  if (!menuBar)
+    return;
+
+  // Title bar with solver name
+  SDL_Rect titleBar = {panelX + 1, panelY + 1, panelW - 2, 28};
+  SDL_SetRenderDrawColor(renderer, borderColor.r, borderColor.g, borderColor.b,
+                         60);
+  SDL_RenderFillRect(renderer, &titleBar);
+  menuBar->RenderTextCentered(solverName, titleBar, {255, 255, 255, 255});
+
+  // "Algorithm" label
+  int textY = panelY + 38;
+  SDL_Rect labelRect = {panelX + 10, textY, panelW - 20, 18};
+  menuBar->RenderTextCentered("Strategy", labelRect, {180, 180, 185, 255});
+
+  // Strategy line 1
+  textY += 22;
+  SDL_Rect strat1Rect = {panelX + 8, textY, panelW - 16, 16};
+  menuBar->RenderTextCentered(strategyLine1, strat1Rect, {200, 200, 210, 255});
+
+  // Strategy line 2
+  textY += 18;
+  SDL_Rect strat2Rect = {panelX + 8, textY, panelW - 16, 16};
+  menuBar->RenderTextCentered(strategyLine2, strat2Rect, {200, 200, 210, 255});
+
+  // Separator line
+  textY += 24;
+  SDL_SetRenderDrawColor(renderer, 72, 72, 74, 255);
+  SDL_RenderDrawLine(renderer, panelX + 15, textY, panelX + panelW - 15,
+                     textY);
+
+  // Complexity label
+  textY += 8;
+  SDL_Rect compLabel = {panelX + 10, textY, panelW - 20, 18};
+  menuBar->RenderTextCentered("Complexity", compLabel, {180, 180, 185, 255});
+
+  // Complexity value
+  textY += 22;
+  SDL_Rect compRect = {panelX + 8, textY, panelW - 16, 18};
+  menuBar->RenderTextCentered(complexityLine, compRect, borderColor);
+
+  // Live stats separator
+  textY += 26;
+  SDL_SetRenderDrawColor(renderer, 72, 72, 74, 255);
+  SDL_RenderDrawLine(renderer, panelX + 15, textY, panelX + panelW - 15,
+                     textY);
+
+  // Show candidates evaluated if solver has data
+  textY += 8;
+  if (currentSolver_) {
+    int candidates = currentSolver_->GetLastCandidatesEvaluated();
+    std::string candStr = "Last eval: " + std::to_string(candidates) + " pos";
+    SDL_Rect candRect = {panelX + 8, textY, panelW - 16, 16};
+    menuBar->RenderTextCentered(candStr, candRect, {150, 150, 155, 255});
   }
 }
 
