@@ -51,7 +51,8 @@ public:
     VICTORY_BLINK,     // Flash animation on win
     VICTORY,           // Show analytics screen
     GAME_ENDED,        // Player ended game early - "You Lost"
-    REPLAY_VIEWER      // Step-by-step algorithm replay
+    REPLAY_VIEWER,     // Step-by-step algorithm replay
+    BENCHMARK_RESULTS  // Algorithm comparison dashboard
   };
 
   // Difficulty levels
@@ -161,6 +162,21 @@ private:
   std::vector<Node> replayNodes_;    // Graph state for replay rendering
   std::chrono::steady_clock::time_point replayLastStepTime_;
   static constexpr float REPLAY_STEP_INTERVAL = 0.8f; // Auto-play speed
+
+  // Algorithm Comparison / Benchmark Mode (Feature 1)
+  struct BenchmarkResult {
+    std::string solverName;
+    int totalMoves = 0;
+    int64_t totalTimeMs = 0;
+    int totalCandidatesEvaluated = 0;
+    int initialIntersections = 0;
+    int finalIntersections = 0;
+    bool solved = false;
+    std::vector<int> intersectionHistory; // Per-move intersection count
+  };
+  std::vector<BenchmarkResult> benchmarkResults_;
+  static constexpr int BENCHMARK_MAX_MOVES = 100;
+  static constexpr float BENCHMARK_MAX_TIME = 30.0f; // seconds per solver
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -334,6 +350,11 @@ private:
   void RenderReplayViewer();   // Render replay screen with controls and annotations
   void HandleReplayInput(const SDL_Event &event); // Handle replay button clicks
   void ReplayGoToStep(int step); // Update graph state for a specific step
+
+  // Algorithm Comparison / Benchmark Mode (Feature 1)
+  void RunBenchmark();              // Run all 3 solvers on same graph, store results
+  void RenderBenchmarkResults();    // Render comparison dashboard
+  void HandleBenchmarkInput(const SDL_Event &event); // Handle dashboard clicks
 };
 
 } // namespace GreedyTangle

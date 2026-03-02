@@ -141,6 +141,15 @@ void GameEngine::HandleInput() {
       continue;
     }
 
+    // Benchmark results has its own input handling
+    if (currentPhase == GamePhase::BENCHMARK_RESULTS) {
+      if (event.type == SDL_QUIT) {
+        isRunning = false;
+      }
+      HandleBenchmarkInput(event);
+      continue;
+    }
+
     switch (event.type) {
     case SDL_QUIT:
       isRunning = false;
@@ -362,6 +371,15 @@ void GameEngine::Render() {
 
   if (currentPhase == GamePhase::REPLAY_VIEWER) {
     RenderReplayViewer();
+    if (menuBar) {
+      menuBar->Render();
+    }
+    SDL_RenderPresent(renderer);
+    return;
+  }
+
+  if (currentPhase == GamePhase::BENCHMARK_RESULTS) {
+    RenderBenchmarkResults();
     if (menuBar) {
       menuBar->Render();
     }
@@ -1029,6 +1047,10 @@ void GameEngine::UpdatePhase() {
       replayPlaying_ = false; // Stop at end
     }
     break;
+
+  case GamePhase::BENCHMARK_RESULTS:
+    // Static screen, no updates needed
+    break;
   }
 }
 
@@ -1046,6 +1068,7 @@ void GameEngine::SetupMenus() {
           "Toggle Heatmap (H)", [this]() { ToggleHeatmap(); }, true,
           heatmapEnabled_),
       MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
+      MenuItem("Run Benchmark", [this]() { RunBenchmark(); }),
       MenuItem(), // Separator
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
@@ -2703,6 +2726,328 @@ void GameEngine::RenderReplayViewer() {
     SDL_Rect hintRect = {10, btnY + 5, 200, 20};
     menuBar->RenderTextCentered("Arrow keys / Space", hintRect,
                                 {100, 100, 105, 255});
+  }
+}
+
+// ============== ALGORITHM COMPARISON / BENCHMARK MODE (Feature 1) ==============
+
+void GameEngine::RunBenchmark() {
+  // Need a tangled graph to benchmark against
+  if (nodes.empty()) {
+    std::cout << "[Benchmark] No graph available. Start a game first."
+              << std::endl;
+    return;
+  }
+
+  // Wait for any in-flight CPU task
+  if (cpuSolving_ && cpuFuture_.valid()) {
+    cpuFuture_.wait();
+    cpuSolving_ = false;
+  }
+
+  // Snapshot the current tangled graph (use cpuNodes_ if available, else nodes)
+  std::vector<Node> snapshotNodes =
+      cpuNodes_.empty() ? nodes : cpuNodes_;
+  // If we're at main menu, generate a fresh graph for benchmarking
+  if (currentPhase == GamePhase::MAIN_MENU) {
+    // Generate a temporary graph
+    ClearGraph();
+    for (int i = 0; i < currentNodeCount; ++i) {
+      AddNode(Vec2(0, 0));
+    }
+    // Build edges via easy generator logic (cycle + chords)
+    for (int i = 0; i < currentNodeCount; ++i) {
+      AddEdge(i, (i + 1) % currentNodeCount);
+    }
+    GeneratePlanarLayout();
+    ApplyCircleScramble();
+    // Apply tangled positions
+    for (size_t i = 0; i < nodes.size(); ++i) {
+      nodes[i].position = targetPositions[i];
+    }
+    snapshotNodes = nodes;
+  }
+
+  int initialIntersections = CountIntersections(snapshotNodes, edges);
+  if (initialIntersections == 0) {
+    std::cout << "[Benchmark] Graph has no intersections. Nothing to solve."
+              << std::endl;
+    return;
+  }
+
+  benchmarkResults_.clear();
+  std::cout << "[Benchmark] Starting comparison on " << snapshotNodes.size()
+            << " nodes, " << edges.size() << " edges, "
+            << initialIntersections << " intersections..." << std::endl;
+
+  // Run each solver
+  SolverMode modes[] = {SolverMode::GREEDY, SolverMode::BACKTRACKING,
+                        SolverMode::DIVIDE_AND_CONQUER_DP};
+
+  for (SolverMode mode : modes) {
+    auto solver = CreateSolver(mode);
+    BenchmarkResult result;
+    result.solverName = solver->GetName();
+    result.initialIntersections = initialIntersections;
+    result.intersectionHistory.push_back(initialIntersections);
+
+    // Clone graph for this solver
+    std::vector<Node> solverNodes = snapshotNodes;
+    int currentCount = initialIntersections;
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    for (int moveNum = 0; moveNum < BENCHMARK_MAX_MOVES; ++moveNum) {
+      // Check time limit
+      auto now = std::chrono::steady_clock::now();
+      float elapsed =
+          std::chrono::duration<float>(now - startTime).count();
+      if (elapsed >= BENCHMARK_MAX_TIME)
+        break;
+
+      if (currentCount == 0)
+        break;
+
+      CPUMove move = solver->FindBestMove(solverNodes, edges);
+      result.totalCandidatesEvaluated += solver->GetLastCandidatesEvaluated();
+
+      if (!move.isValid() || move.intersection_reduction <= 0)
+        break;
+
+      // Apply move
+      solverNodes[move.node_id].position = move.to_position;
+      currentCount = CountIntersections(solverNodes, edges);
+      ++result.totalMoves;
+      result.intersectionHistory.push_back(currentCount);
+    }
+
+    auto endTime = std::chrono::steady_clock::now();
+    result.totalTimeMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(endTime -
+                                                              startTime)
+            .count();
+    result.finalIntersections = currentCount;
+    result.solved = (currentCount == 0);
+
+    std::cout << "[Benchmark] " << result.solverName << ": "
+              << result.totalMoves << " moves, " << result.totalTimeMs
+              << "ms, final=" << result.finalIntersections
+              << (result.solved ? " (SOLVED)" : "") << std::endl;
+
+    benchmarkResults_.push_back(result);
+  }
+
+  currentPhase = GamePhase::BENCHMARK_RESULTS;
+  std::cout << "[Benchmark] Complete. Showing results." << std::endl;
+}
+
+void GameEngine::HandleBenchmarkInput(const SDL_Event &event) {
+  if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) {
+    currentPhase = GamePhase::MAIN_MENU;
+    return;
+  }
+
+  if (event.type == SDL_MOUSEBUTTONDOWN &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    int mx = event.button.x;
+    int my = event.button.y;
+    SDL_Point pt = {mx, my};
+
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+
+    // "Back to Menu" button
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    if (SDL_PointInRect(&pt, &backBtn)) {
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    }
+
+    // "Re-run" button
+    SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
+    if (SDL_PointInRect(&pt, &rerunBtn)) {
+      RunBenchmark();
+      return;
+    }
+  }
+}
+
+void GameEngine::RenderBenchmarkResults() {
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+  int numSolvers = static_cast<int>(benchmarkResults_.size());
+  if (numSolvers == 0)
+    return;
+
+  // Title
+  DrawTextCentered(winW / 2, 55, "ALGORITHM COMPARISON",
+                   {231, 76, 60, 255}, 48);
+
+  // Graph info subtitle
+  std::string graphInfo =
+      "Nodes: " +
+      std::to_string(benchmarkResults_[0].initialIntersections > 0
+                         ? static_cast<int>(nodes.size())
+                         : 0) +
+      "  |  Edges: " + std::to_string(edges.size()) +
+      "  |  Initial Crossings: " +
+      std::to_string(benchmarkResults_[0].initialIntersections);
+  DrawTextCentered(winW / 2, 90, graphInfo, {180, 180, 185, 255}, 24);
+
+  // Column layout for solver cards
+  int cardW = 280;
+  int cardH = 350;
+  int totalW = numSolvers * cardW + (numSolvers - 1) * 20;
+  int startX = (winW - totalW) / 2;
+  int cardY = 120;
+
+  // Solver colors
+  SDL_Color solverColors[] = {
+      {50, 205, 50, 255},   // Greedy: green
+      {255, 165, 0, 255},   // Backtracking: orange
+      {100, 149, 237, 255}  // D&C+DP: blue
+  };
+
+  // Find best values for highlighting
+  int bestMoves = INT_MAX, bestTime = INT_MAX, bestFinal = INT_MAX;
+  for (const auto &r : benchmarkResults_) {
+    if (r.totalMoves > 0 && r.totalMoves < bestMoves)
+      bestMoves = r.totalMoves;
+    if (r.totalTimeMs < bestTime)
+      bestTime = static_cast<int>(r.totalTimeMs);
+    if (r.finalIntersections < bestFinal)
+      bestFinal = r.finalIntersections;
+  }
+
+  for (int i = 0; i < numSolvers; ++i) {
+    const BenchmarkResult &r = benchmarkResults_[i];
+    int cx = startX + i * (cardW + 20);
+    SDL_Color color = solverColors[i % 3];
+
+    // Card background
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 30, 30, 35, 230);
+    SDL_Rect card = {cx, cardY, cardW, cardH};
+    SDL_RenderFillRect(renderer, &card);
+
+    // Card border
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderDrawRect(renderer, &card);
+
+    // Solver name header
+    SDL_Rect header = {cx + 1, cardY + 1, cardW - 2, 36};
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 80);
+    SDL_RenderFillRect(renderer, &header);
+    if (menuBar) {
+      menuBar->RenderTextCentered(r.solverName, header, {255, 255, 255, 255});
+    }
+
+    // Solved badge
+    int textY = cardY + 46;
+    if (menuBar) {
+      if (r.solved) {
+        SDL_Rect badge = {cx + cardW / 2 - 40, textY, 80, 22};
+        SDL_SetRenderDrawColor(renderer, 50, 205, 50, 255);
+        SDL_RenderFillRect(renderer, &badge);
+        menuBar->RenderTextCentered("SOLVED", badge, {20, 20, 25, 255});
+      } else {
+        SDL_Rect badge = {cx + cardW / 2 - 50, textY, 100, 22};
+        SDL_SetRenderDrawColor(renderer, 180, 40, 40, 255);
+        SDL_RenderFillRect(renderer, &badge);
+        menuBar->RenderTextCentered("NOT SOLVED", badge, {255, 255, 255, 255});
+      }
+    }
+
+    textY += 32;
+
+    // Stats helper lambda
+    auto drawStat = [&](int y, const std::string &label,
+                        const std::string &value, bool isBest) {
+      if (!menuBar)
+        return;
+      SDL_Rect labelRect = {cx + 10, y, cardW - 20, 18};
+      menuBar->RenderTextCentered(label, labelRect, {150, 150, 155, 255});
+
+      SDL_Color valColor =
+          isBest ? SDL_Color{50, 255, 50, 255} : SDL_Color{220, 220, 225, 255};
+      SDL_Rect valRect = {cx + 10, y + 20, cardW - 20, 22};
+      menuBar->RenderTextCentered(value, valRect, valColor);
+    };
+
+    // Total Moves
+    drawStat(textY, "Total Moves", std::to_string(r.totalMoves),
+             r.totalMoves == bestMoves && r.totalMoves > 0);
+    textY += 50;
+
+    // Total Time
+    std::string timeStr;
+    if (r.totalTimeMs < 1000) {
+      timeStr = std::to_string(r.totalTimeMs) + " ms";
+    } else {
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(2)
+          << (r.totalTimeMs / 1000.0) << " s";
+      timeStr = oss.str();
+    }
+    drawStat(textY, "Total Time", timeStr,
+             static_cast<int>(r.totalTimeMs) == bestTime);
+    textY += 50;
+
+    // Final Intersections
+    drawStat(textY, "Final Crossings",
+             std::to_string(r.finalIntersections),
+             r.finalIntersections == bestFinal);
+    textY += 50;
+
+    // Candidates Evaluated
+    std::string candStr;
+    if (r.totalCandidatesEvaluated > 1000) {
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(1)
+          << (r.totalCandidatesEvaluated / 1000.0) << "K";
+      candStr = oss.str();
+    } else {
+      candStr = std::to_string(r.totalCandidatesEvaluated);
+    }
+    drawStat(textY, "Candidates Evaluated", candStr, false);
+    textY += 50;
+
+    // Avg time per move
+    if (r.totalMoves > 0) {
+      float avgMs =
+          static_cast<float>(r.totalTimeMs) / r.totalMoves;
+      std::ostringstream avgStr;
+      avgStr << std::fixed << std::setprecision(1) << avgMs << " ms/move";
+      drawStat(textY, "Avg Time/Move", avgStr.str(), false);
+    } else {
+      drawStat(textY, "Avg Time/Move", "N/A", false);
+    }
+  }
+
+  // Re-run button
+  {
+    SDL_Rect rerunBtn = {winW / 2 - 80, winH - 95, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+    SDL_RenderFillRect(renderer, &rerunBtn);
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_RenderDrawRect(renderer, &rerunBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Re-run Benchmark", rerunBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+
+  // Back button
+  {
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 180, 40, 40, 255);
+    SDL_RenderFillRect(renderer, &backBtn);
+    SDL_SetRenderDrawColor(renderer, 220, 80, 80, 255);
+    SDL_RenderDrawRect(renderer, &backBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Back to Menu", backBtn,
+                                  {255, 255, 255, 255});
+    }
   }
 }
 
