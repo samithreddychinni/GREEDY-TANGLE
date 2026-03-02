@@ -53,7 +53,8 @@ public:
     GAME_ENDED,        // Player ended game early - "You Lost"
     REPLAY_VIEWER,     // Step-by-step algorithm replay
     BENCHMARK_RESULTS,  // Algorithm comparison dashboard
-    SCALABILITY_RESULTS // Empirical complexity analysis
+    SCALABILITY_RESULTS, // Empirical complexity analysis
+    HOW_IT_WORKS        // Interactive algorithm explainer
   };
 
   // Difficulty levels
@@ -193,6 +194,9 @@ private:
   static constexpr int SCALABILITY_NUM_SIZES = 7;
   static constexpr int SCALABILITY_MAX_MOVES = 50;
   static constexpr float SCALABILITY_MAX_TIME = 15.0f; // seconds per solver per size
+
+  // How It Works explainer (selected algorithm tab index)
+  int howItWorksTab_ = 0; // 0=Greedy, 1=Backtracking, 2=D&C+DP
 
   // UI Fonts
   TTF_Font *titleFont = nullptr;
@@ -379,6 +383,10 @@ private:
   void RunScalabilityTest();              // Run all solvers on increasing graph sizes
   void RenderScalabilityResults();        // Render runtime vs N chart
   void HandleScalabilityInput(const SDL_Event &event); // Handle scalability screen input
+
+  // How It Works - Interactive Algorithm Explainer
+  void RenderHowItWorks();              // Render explainer screen with tabs
+  void HandleHowItWorksInput(const SDL_Event &event); // Handle tab clicks
 };
 
 } // namespace GreedyTangle

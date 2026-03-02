@@ -159,6 +159,15 @@ void GameEngine::HandleInput() {
       continue;
     }
 
+    // How It Works has its own input handling
+    if (currentPhase == GamePhase::HOW_IT_WORKS) {
+      if (event.type == SDL_QUIT) {
+        isRunning = false;
+      }
+      HandleHowItWorksInput(event);
+      continue;
+    }
+
     switch (event.type) {
     case SDL_QUIT:
       isRunning = false;
@@ -398,6 +407,15 @@ void GameEngine::Render() {
 
   if (currentPhase == GamePhase::SCALABILITY_RESULTS) {
     RenderScalabilityResults();
+    if (menuBar) {
+      menuBar->Render();
+    }
+    SDL_RenderPresent(renderer);
+    return;
+  }
+
+  if (currentPhase == GamePhase::HOW_IT_WORKS) {
+    RenderHowItWorks();
     if (menuBar) {
       menuBar->Render();
     }
@@ -1072,6 +1090,9 @@ void GameEngine::UpdatePhase() {
   case GamePhase::SCALABILITY_RESULTS:
     // Static screen, no updates needed
     break;
+  case GamePhase::HOW_IT_WORKS:
+    // Static screen, no updates needed
+    break;
   }
 }
 
@@ -1091,6 +1112,10 @@ void GameEngine::SetupMenus() {
       MenuItem("View CPU Replay", [this]() { StartReplayViewer(); }),
       MenuItem("Run Benchmark", [this]() { RunBenchmark(); }),
       MenuItem("Run Scalability Test", [this]() { RunScalabilityTest(); }),
+      MenuItem("How It Works", [this]() {
+        howItWorksTab_ = 0;
+        currentPhase = GamePhase::HOW_IT_WORKS;
+      }),
       MenuItem(), // Separator
       MenuItem("Exit", [this]() { isRunning = false; })};
   menuBar->AddMenu("Game", gameMenu);
@@ -3698,6 +3723,309 @@ void GameEngine::RenderScalabilityResults() {
   }
 
   // "Back to Menu" button
+  {
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
+    SDL_RenderFillRect(renderer, &backBtn);
+    SDL_SetRenderDrawColor(renderer, 100, 180, 255, 255);
+    SDL_RenderDrawRect(renderer, &backBtn);
+    if (menuBar) {
+      menuBar->RenderTextCentered("Back to Menu", backBtn,
+                                  {255, 255, 255, 255});
+    }
+  }
+}
+
+void GameEngine::HandleHowItWorksInput(const SDL_Event &event) {
+  if (event.type == SDL_KEYDOWN) {
+    switch (event.key.keysym.sym) {
+    case SDLK_ESCAPE:
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    case SDLK_LEFT:
+    case SDLK_1:
+      howItWorksTab_ = 0;
+      return;
+    case SDLK_DOWN:
+    case SDLK_2:
+      howItWorksTab_ = 1;
+      return;
+    case SDLK_RIGHT:
+    case SDLK_3:
+      howItWorksTab_ = 2;
+      return;
+    default:
+      break;
+    }
+  }
+
+  if (event.type == SDL_MOUSEBUTTONDOWN &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    int mx = event.button.x;
+    int my = event.button.y;
+    SDL_Point pt = {mx, my};
+
+    int winW, winH;
+    SDL_GetWindowSize(window, &winW, &winH);
+
+    // Tab buttons at top
+    int tabWidth = 200;
+    int tabGap = 15;
+    int totalTabWidth = 3 * tabWidth + 2 * tabGap;
+    int tabStartX = (winW - totalTabWidth) / 2;
+    int tabY = 55;
+
+    for (int i = 0; i < 3; ++i) {
+      SDL_Rect tabRect = {tabStartX + i * (tabWidth + tabGap), tabY, tabWidth,
+                          36};
+      if (SDL_PointInRect(&pt, &tabRect)) {
+        howItWorksTab_ = i;
+        return;
+      }
+    }
+
+    // Back button
+    SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
+    if (SDL_PointInRect(&pt, &backBtn)) {
+      currentPhase = GamePhase::MAIN_MENU;
+      return;
+    }
+  }
+}
+
+void GameEngine::RenderHowItWorks() {
+  int winW, winH;
+  SDL_GetWindowSize(window, &winW, &winH);
+
+  // Background
+  SDL_SetRenderDrawColor(renderer, 20, 20, 25, 255);
+  SDL_RenderClear(renderer);
+
+  // Title
+  if (menuBar) {
+    SDL_Rect titleRect = {0, 15, winW, 35};
+    menuBar->RenderTextCentered("How It Works - Algorithm Explainer",
+                                titleRect, {255, 255, 255, 255});
+  }
+
+  // Tab buttons
+  std::string tabNames[] = {"Greedy", "Backtracking", "D&C + DP"};
+  SDL_Color tabColors[] = {
+      {50, 205, 50, 255},   // Green
+      {255, 165, 0, 255},   // Orange
+      {100, 180, 255, 255}  // Blue
+  };
+
+  int tabWidth = 200;
+  int tabGap = 15;
+  int totalTabWidth = 3 * tabWidth + 2 * tabGap;
+  int tabStartX = (winW - totalTabWidth) / 2;
+  int tabY = 55;
+
+  for (int i = 0; i < 3; ++i) {
+    SDL_Rect tabRect = {tabStartX + i * (tabWidth + tabGap), tabY, tabWidth,
+                        36};
+    if (i == howItWorksTab_) {
+      SDL_SetRenderDrawColor(renderer, tabColors[i].r, tabColors[i].g,
+                             tabColors[i].b, 60);
+      SDL_RenderFillRect(renderer, &tabRect);
+      SDL_SetRenderDrawColor(renderer, tabColors[i].r, tabColors[i].g,
+                             tabColors[i].b, 255);
+      SDL_RenderDrawRect(renderer, &tabRect);
+    } else {
+      SDL_SetRenderDrawColor(renderer, 40, 40, 55, 255);
+      SDL_RenderFillRect(renderer, &tabRect);
+      SDL_SetRenderDrawColor(renderer, 70, 70, 90, 255);
+      SDL_RenderDrawRect(renderer, &tabRect);
+    }
+    if (menuBar) {
+      SDL_Color textColor =
+          (i == howItWorksTab_) ? tabColors[i] : SDL_Color{150, 150, 170, 255};
+      menuBar->RenderTextCentered(tabNames[i], tabRect, textColor);
+    }
+  }
+
+  // Content area
+  int contentLeft = 50;
+  int contentTop = 105;
+  int contentWidth = winW - 100;
+  int lineHeight = 28;
+
+  SDL_Color accent = tabColors[howItWorksTab_];
+  SDL_Color white = {255, 255, 255, 255};
+  SDL_Color dim = {160, 160, 180, 255};
+  SDL_Color highlight = {255, 255, 100, 255};
+
+  auto renderLine = [&](int y, const std::string &text, SDL_Color color) {
+    if (menuBar) {
+      SDL_Rect r = {contentLeft, y, contentWidth, lineHeight - 4};
+      // Left-align by using a rect starting at contentLeft
+      menuBar->RenderTextCentered(text, r, color);
+    }
+  };
+
+  auto renderSectionHeader = [&](int y, const std::string &text) {
+    // Draw accent bar
+    SDL_SetRenderDrawColor(renderer, accent.r, accent.g, accent.b, 255);
+    SDL_Rect bar = {contentLeft, y + 2, 4, lineHeight - 6};
+    SDL_RenderFillRect(renderer, &bar);
+    if (menuBar) {
+      SDL_Rect r = {contentLeft + 12, y, contentWidth - 12, lineHeight - 4};
+      menuBar->RenderTextCentered(text, r, accent);
+    }
+  };
+
+  int y = contentTop;
+
+  if (howItWorksTab_ == 0) {
+    // ==================== GREEDY ====================
+    renderSectionHeader(y, "What is it?");
+    y += lineHeight + 4;
+    renderLine(y, "A greedy algorithm always picks the BEST option available RIGHT NOW.", white);
+    y += lineHeight;
+    renderLine(y, "It never looks ahead or reconsiders past choices.", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Real-Life Analogy");
+    y += lineHeight + 4;
+    renderLine(y, "Imagine you're in a parking lot. You grab the FIRST close spot you see.", highlight);
+    y += lineHeight;
+    renderLine(y, "You don't drive around to check if there's a closer one further ahead.", dim);
+    y += lineHeight;
+    renderLine(y, "Fast decision, but maybe not the best overall.", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "How it works in this game");
+    y += lineHeight + 4;
+    renderLine(y, "1. Look at every node in the graph", white);
+    y += lineHeight;
+    renderLine(y, "2. For each node, try many possible new positions", white);
+    y += lineHeight;
+    renderLine(y, "3. Count how many crossings each position removes", white);
+    y += lineHeight;
+    renderLine(y, "4. Pick the move that removes the MOST crossings", highlight);
+    y += lineHeight;
+    renderLine(y, "5. Repeat until no crossings remain (or it gets stuck)", white);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Speed vs Quality");
+    y += lineHeight + 4;
+
+    // Speed bar
+    renderLine(y, "Speed:    [==========] Very Fast", {50, 205, 50, 255});
+    y += lineHeight;
+    renderLine(y, "Quality:  [======    ] Good, but can get stuck", {220, 180, 50, 255});
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Time Complexity (How it scales)");
+    y += lineHeight + 4;
+    renderLine(y, "O(N^2 * C) per move  --  N = nodes, C = candidate positions", white);
+    y += lineHeight;
+    renderLine(y, "In plain English: If you double the nodes, it takes ~4x longer per move.", highlight);
+    y += lineHeight;
+    renderLine(y, "It's fast, but it can get STUCK in local minima (no single move helps).", dim);
+
+  } else if (howItWorksTab_ == 1) {
+    // ==================== BACKTRACKING ====================
+    renderSectionHeader(y, "What is it?");
+    y += lineHeight + 4;
+    renderLine(y, "Backtracking tries a move, then tries ANOTHER move after that, and so on.", white);
+    y += lineHeight;
+    renderLine(y, "If a sequence doesn't work, it UNDOES everything and tries a different path.", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Real-Life Analogy");
+    y += lineHeight + 4;
+    renderLine(y, "Imagine solving a maze. You walk down a path until you hit a dead end.", highlight);
+    y += lineHeight;
+    renderLine(y, "Then you walk BACK to the last fork and try a different direction.", dim);
+    y += lineHeight;
+    renderLine(y, "You explore deeper possibilities that greedy would never see.", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "How it works in this game");
+    y += lineHeight + 4;
+    renderLine(y, "1. Try moving a node to a new position (depth 1)", white);
+    y += lineHeight;
+    renderLine(y, "2. If crossings decrease, try ANOTHER move on top of that (depth 2)", white);
+    y += lineHeight;
+    renderLine(y, "3. Keep going up to 3 moves deep (depth limit = 3)", white);
+    y += lineHeight;
+    renderLine(y, "4. Remember the BEST first move from any sequence that worked", highlight);
+    y += lineHeight;
+    renderLine(y, "5. Undo all trial moves and apply only the best first move", white);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Speed vs Quality");
+    y += lineHeight + 4;
+    renderLine(y, "Speed:    [===       ] Slow (tries many combinations)", {220, 50, 50, 255});
+    y += lineHeight;
+    renderLine(y, "Quality:  [=========]  Excellent (sees further ahead)", {50, 205, 50, 255});
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Time Complexity (How it scales)");
+    y += lineHeight + 4;
+    renderLine(y, "O((N * C)^D) per move  --  D = depth limit (3)", white);
+    y += lineHeight;
+    renderLine(y, "In plain English: Time EXPLODES as nodes increase. 10 nodes is fine,", highlight);
+    y += lineHeight;
+    renderLine(y, "30 nodes is slow, 50+ nodes might take minutes per move.", highlight);
+
+  } else {
+    // ==================== D&C + DP ====================
+    renderSectionHeader(y, "What is it?");
+    y += lineHeight + 4;
+    renderLine(y, "Divide & Conquer splits the big problem into SMALLER sub-problems.", white);
+    y += lineHeight;
+    renderLine(y, "Dynamic Programming remembers solutions to avoid re-doing work.", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Real-Life Analogy");
+    y += lineHeight + 4;
+    renderLine(y, "Imagine organizing a messy room. Instead of tackling everything at once:", highlight);
+    y += lineHeight;
+    renderLine(y, "Split the room into quadrants. Organize each quadrant separately.", dim);
+    y += lineHeight;
+    renderLine(y, "Then fix anything that's between quadrants. Divide and conquer!", dim);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "How it works in this game");
+    y += lineHeight + 4;
+    renderLine(y, "1. DIVIDE: Split the graph into spatial regions (left/right or grid)", white);
+    y += lineHeight;
+    renderLine(y, "2. CONQUER: Find the best node placement within each region (using DP)", white);
+    y += lineHeight;
+    renderLine(y, "3. DP stores results so it doesn't recalculate the same sub-problem", highlight);
+    y += lineHeight;
+    renderLine(y, "4. COMBINE: Fix crossings at region boundaries", white);
+    y += lineHeight;
+    renderLine(y, "5. Pick the overall best move from all regions", white);
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Speed vs Quality");
+    y += lineHeight + 4;
+    renderLine(y, "Speed:    [=======   ] Moderate (partition overhead)", {255, 165, 0, 255});
+    y += lineHeight;
+    renderLine(y, "Quality:  [========  ] Very Good (structured approach)", {50, 205, 50, 255});
+    y += lineHeight + 10;
+
+    renderSectionHeader(y, "Time Complexity (How it scales)");
+    y += lineHeight + 4;
+    renderLine(y, "O(N log N * C) per move  --  splits problem logarithmically", white);
+    y += lineHeight;
+    renderLine(y, "In plain English: Scales much better than backtracking.", highlight);
+    y += lineHeight;
+    renderLine(y, "Doubling nodes only adds a small constant, not a multiplier.", highlight);
+  }
+
+  // Keyboard hint
+  if (menuBar) {
+    SDL_Rect hint = {0, winH - 95, winW, 20};
+    menuBar->RenderTextCentered("Press 1 / 2 / 3 or click tabs to switch algorithms",
+                                hint, {100, 100, 120, 255});
+  }
+
+  // Back button
   {
     SDL_Rect backBtn = {winW / 2 - 80, winH - 55, 160, 35};
     SDL_SetRenderDrawColor(renderer, 44, 62, 80, 255);
