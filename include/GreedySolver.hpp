@@ -9,7 +9,7 @@ namespace GreedyTangle {
 
 class GreedySolver : public ICPUSolver {
 public:
-  static constexpr float GRID_SPACING = 80.0f;
+  static constexpr float GRID_SPACING = 50.0f;
   static constexpr float MARGIN = 60.0f;
   static constexpr float WINDOW_WIDTH = 1024.0f;
   static constexpr float WINDOW_HEIGHT = 768.0f;

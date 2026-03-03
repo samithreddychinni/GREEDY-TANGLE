@@ -124,6 +124,7 @@ GreedySolver::GenerateCandidatePositions(int node_id,
       if (neighbor_id >= 0 && neighbor_id < static_cast<int>(nodes.size())) {
         const Vec2 &neighbor_pos = nodes[neighbor_id].position;
 
+        // 8 positions around each neighbor
         for (int i = 0; i < 8; ++i) {
           float angle = 2.0f * M_PI * static_cast<float>(i) / 8.0f;
           Vec2 offset(std::cos(angle) * radius, std::sin(angle) * radius);
@@ -135,6 +136,26 @@ GreedySolver::GenerateCandidatePositions(int node_id,
               std::max(MARGIN, std::min(WINDOW_HEIGHT - MARGIN, candidate.y));
 
           candidates.push_back(candidate);
+        }
+
+        // Midpoint between target and neighbor
+        Vec2 midpoint((target.position.x + neighbor_pos.x) * 0.5f,
+                      (target.position.y + neighbor_pos.y) * 0.5f);
+        midpoint.x = std::max(MARGIN, std::min(WINDOW_WIDTH - MARGIN, midpoint.x));
+        midpoint.y = std::max(MARGIN, std::min(WINDOW_HEIGHT - MARGIN, midpoint.y));
+        candidates.push_back(midpoint);
+      }
+    }
+
+    // Add midpoints between all pairs of adjacent nodes (edge midpoints)
+    for (size_t a = 0; a < nodes.size(); ++a) {
+      for (int b : nodes[a].adjacencyList) {
+        if (b > static_cast<int>(a) && b < static_cast<int>(nodes.size())) {
+          Vec2 mid((nodes[a].position.x + nodes[b].position.x) * 0.5f,
+                   (nodes[a].position.y + nodes[b].position.y) * 0.5f);
+          mid.x = std::max(MARGIN, std::min(WINDOW_WIDTH - MARGIN, mid.x));
+          mid.y = std::max(MARGIN, std::min(WINDOW_HEIGHT - MARGIN, mid.y));
+          candidates.push_back(mid);
         }
       }
     }

@@ -1546,6 +1546,7 @@ void GameEngine::StartCPURace() {
   cpuFinished_ = false;
   cpuPaused_ = false;
   cpuMoveCount_ = 0;
+  cpuStuckCount_ = 0;
   cpuGameDuration_ = 0.0f;
   winner_ = "";
 
@@ -1682,6 +1683,11 @@ void GameEngine::UpdateCPURace() {
         cpuIntersectionCount_ = move.intersections_after;
         ++cpuMoveCount_;
 
+        // Reset stuck counter on successful move
+        if (move.intersection_reduction > 0) {
+          cpuStuckCount_ = 0;
+        }
+
         // Log the move
         cpuReplayLogger_->RecordMove(move);
 
@@ -1702,10 +1708,85 @@ void GameEngine::UpdateCPURace() {
           }
         }
       } else {
-        // CPU is stuck
-        cpuFinished_ = true;
-        std::cout << "[CPU] Stuck in local minimum at " << cpuIntersectionCount_
-                  << " intersections" << std::endl;
+        // CPU solver returned no valid move - try perturbation to escape local minimum
+        ++cpuStuckCount_;
+
+        if (cpuStuckCount_ < MAX_PERTURBATIONS && cpuIntersectionCount_ > 0) {
+          // Find nodes involved in crossings
+          std::vector<int> crossedNodes;
+          for (const Edge &e1 : edges) {
+            for (const Edge &e2 : edges) {
+              if (e1.sharesVertex(e2)) continue;
+              if (e1.u_id >= static_cast<int>(cpuNodes_.size()) ||
+                  e1.v_id >= static_cast<int>(cpuNodes_.size()) ||
+                  e2.u_id >= static_cast<int>(cpuNodes_.size()) ||
+                  e2.v_id >= static_cast<int>(cpuNodes_.size())) continue;
+              const Vec2 &a = cpuNodes_[e1.u_id].position;
+              const Vec2 &b = cpuNodes_[e1.v_id].position;
+              const Vec2 &c = cpuNodes_[e2.u_id].position;
+              const Vec2 &d = cpuNodes_[e2.v_id].position;
+              if (CheckIntersection(a, b, c, d)) {
+                crossedNodes.push_back(e1.u_id);
+                crossedNodes.push_back(e1.v_id);
+                crossedNodes.push_back(e2.u_id);
+                crossedNodes.push_back(e2.v_id);
+              }
+            }
+          }
+
+          if (!crossedNodes.empty()) {
+            // Pick a random crossed node and move it to centroid of neighbors
+            int idx = crossedNodes[cpuStuckCount_ % crossedNodes.size()];
+            if (idx >= 0 && idx < static_cast<int>(cpuNodes_.size()) &&
+                !cpuNodes_[idx].adjacencyList.empty()) {
+              CPUMove perturbMove;
+              perturbMove.node_id = idx;
+              perturbMove.from_position = cpuNodes_[idx].position;
+              perturbMove.intersections_before = cpuIntersectionCount_;
+
+              // Move to centroid of neighbors
+              Vec2 centroid(0, 0);
+              int count = 0;
+              for (int nid : cpuNodes_[idx].adjacencyList) {
+                if (nid >= 0 && nid < static_cast<int>(cpuNodes_.size())) {
+                  centroid = centroid + cpuNodes_[nid].position;
+                  ++count;
+                }
+              }
+              if (count > 0) {
+                centroid = centroid * (1.0f / static_cast<float>(count));
+                // Add small random offset to avoid exact overlap
+                centroid.x += static_cast<float>((cpuStuckCount_ * 37) % 30 - 15);
+                centroid.y += static_cast<float>((cpuStuckCount_ * 53) % 30 - 15);
+                centroid.x = std::max(60.0f, std::min(964.0f, centroid.x));
+                centroid.y = std::max(60.0f, std::min(708.0f, centroid.y));
+
+                perturbMove.to_position = centroid;
+                cpuNodes_[idx].position = centroid;
+                cpuIntersectionCount_ = CountIntersections(cpuNodes_, edges);
+                perturbMove.intersections_after = cpuIntersectionCount_;
+                perturbMove.intersection_reduction =
+                    perturbMove.intersections_before - cpuIntersectionCount_;
+                ++cpuMoveCount_;
+                cpuReplayLogger_->RecordMove(perturbMove);
+
+                std::cout << "[CPU] Perturbation #" << cpuStuckCount_
+                          << ": Node " << idx
+                          << " -> centroid | Intersections: "
+                          << cpuIntersectionCount_ << std::endl;
+
+                if (cpuIntersectionCount_ == 0) {
+                  cpuFinished_ = true;
+                }
+              }
+            }
+          }
+        } else {
+          cpuFinished_ = true;
+          std::cout << "[CPU] Stuck after " << cpuStuckCount_
+                    << " perturbations at " << cpuIntersectionCount_
+                    << " intersections" << std::endl;
+        }
       }
     }
   }
@@ -2460,31 +2541,333 @@ void GameEngine::RenderHeatmapLegend() {
   }
 }
 
+// ============== CPU THINKING VISUALIZATION ==============
+
+void GameEngine::ComputeCpuVisCandidates(int nodeId) {
+  cpuVisCandidates_.clear();
+
+  if (nodeId < 0 || nodeId >= static_cast<int>(cpuNodes_.size()))
+    return;
+
+  int currentIntersections = CountIntersections(cpuNodes_, edges);
+
+  // Generate candidate positions (same grid as solvers)
+  constexpr float GRID_SPACING = 80.0f;
+  constexpr float MARGIN = 60.0f;
+  constexpr float W = 1024.0f;
+  constexpr float H = 768.0f;
+
+  std::vector<Vec2> candidatePositions;
+  for (float x = MARGIN; x <= W - MARGIN; x += GRID_SPACING) {
+    for (float y = MARGIN; y <= H - MARGIN; y += GRID_SPACING) {
+      candidatePositions.emplace_back(x, y);
+    }
+  }
+
+  // Add neighbor-based candidates
+  for (const auto &edge : edges) {
+    int neighborId = -1;
+    if (edge.u_id == nodeId)
+      neighborId = edge.v_id;
+    else if (edge.v_id == nodeId)
+      neighborId = edge.u_id;
+
+    if (neighborId >= 0 && neighborId < static_cast<int>(cpuNodes_.size())) {
+      const Vec2 &npos = cpuNodes_[neighborId].position;
+      float radius = 40.0f;
+      for (int i = 0; i < 8; ++i) {
+        float angle =
+            2.0f * static_cast<float>(M_PI) * static_cast<float>(i) / 8.0f;
+        Vec2 candidate(npos.x + std::cos(angle) * radius,
+                       npos.y + std::sin(angle) * radius);
+        candidate.x = std::max(MARGIN, std::min(W - MARGIN, candidate.x));
+        candidate.y = std::max(MARGIN, std::min(H - MARGIN, candidate.y));
+        candidatePositions.push_back(candidate);
+      }
+    }
+  }
+
+  // Evaluate each candidate
+  Vec2 originalPos = cpuNodes_[nodeId].position;
+  for (const Vec2 &cpos : candidatePositions) {
+    cpuNodes_[nodeId].position = cpos;
+    int newCount = CountIntersections(cpuNodes_, edges);
+    cpuNodes_[nodeId].position = originalPos;
+
+    CpuVisCandidate vc;
+    vc.position = cpos;
+    vc.reduction = currentIntersections - newCount;
+    cpuVisCandidates_.push_back(vc);
+  }
+}
+
+void GameEngine::RenderCpuVisualization() {
+  if (!cpuVisActive_ || cpuVisCandidates_.empty())
+    return;
+
+  // Fade out as visualization progresses
+  float alpha = 1.0f - cpuVisProgress_;
+  if (alpha <= 0.0f)
+    return;
+
+  Uint8 baseAlpha = static_cast<Uint8>(alpha * 180);
+
+  // Find max reduction for color scaling
+  int maxReduction = 1;
+  for (const auto &c : cpuVisCandidates_) {
+    maxReduction = std::max(maxReduction, std::abs(c.reduction));
+  }
+
+  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+  // Draw all candidate dots
+  for (const auto &c : cpuVisCandidates_) {
+    int cx = static_cast<int>(c.position.x);
+    int cy = static_cast<int>(c.position.y);
+
+    // Color: red (bad) → yellow (neutral) → green (good)
+    SDL_Color dotColor;
+    if (c.reduction > 0) {
+      float t = static_cast<float>(c.reduction) /
+                static_cast<float>(maxReduction);
+      dotColor = {static_cast<Uint8>(255 * (1.0f - t)),
+                  static_cast<Uint8>(150 + 105 * t), 50,
+                  static_cast<Uint8>(baseAlpha * (0.5f + 0.5f * t))};
+    } else if (c.reduction < 0) {
+      float t = static_cast<float>(-c.reduction) /
+                static_cast<float>(maxReduction);
+      dotColor = {static_cast<Uint8>(200 + 55 * t),
+                  static_cast<Uint8>(150 * (1.0f - t)), 30,
+                  static_cast<Uint8>(baseAlpha * 0.4f)};
+    } else {
+      dotColor = {200, 180, 50, static_cast<Uint8>(baseAlpha * 0.3f)};
+    }
+
+    // Check if this is the chosen position
+    bool isChosen =
+        cpuVisMove_.isValid() &&
+        std::abs(c.position.x - cpuVisMove_.to_position.x) < 2.0f &&
+        std::abs(c.position.y - cpuVisMove_.to_position.y) < 2.0f;
+
+    if (isChosen) {
+      // Bright pulsing gold ring for chosen position
+      float pulse = 0.7f + 0.3f * std::sin(cpuVisProgress_ * 10.0f);
+      Uint8 ringAlpha = static_cast<Uint8>(255 * alpha * pulse);
+      SDL_SetRenderDrawColor(renderer, 255, 215, 0, ringAlpha);
+      for (int dy = -7; dy <= 7; ++dy) {
+        for (int dx = -7; dx <= 7; ++dx) {
+          int d2 = dx * dx + dy * dy;
+          if (d2 >= 25 && d2 <= 49) {
+            SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+          }
+        }
+      }
+      // Fill with green
+      SDL_SetRenderDrawColor(renderer, 50, 255, 50, ringAlpha);
+      for (int dy = -4; dy <= 4; ++dy) {
+        for (int dx = -4; dx <= 4; ++dx) {
+          if (dx * dx + dy * dy <= 16) {
+            SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+          }
+        }
+      }
+    } else {
+      // Small dot
+      SDL_SetRenderDrawColor(renderer, dotColor.r, dotColor.g, dotColor.b,
+                             dotColor.a);
+      int r = (c.reduction > 0) ? 3 : 2;
+      for (int dy = -r; dy <= r; ++dy) {
+        for (int dx = -r; dx <= r; ++dx) {
+          if (dx * dx + dy * dy <= r * r) {
+            SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+          }
+        }
+      }
+    }
+  }
+
+  // Draw movement arrow from old to new position
+  if (cpuVisMove_.isValid()) {
+    int fromX = static_cast<int>(cpuVisMove_.from_position.x);
+    int fromY = static_cast<int>(cpuVisMove_.from_position.y);
+    int toX = static_cast<int>(cpuVisMove_.to_position.x);
+    int toY = static_cast<int>(cpuVisMove_.to_position.y);
+
+    // Red X at old position
+    Uint8 xAlpha = static_cast<Uint8>(200 * alpha);
+    SDL_SetRenderDrawColor(renderer, 255, 80, 80, xAlpha);
+    for (int offset = -1; offset <= 1; ++offset) {
+      SDL_RenderDrawLine(renderer, fromX - 5, fromY - 5 + offset,
+                         fromX + 5, fromY + 5 + offset);
+      SDL_RenderDrawLine(renderer, fromX + 5, fromY - 5 + offset,
+                         fromX - 5, fromY + 5 + offset);
+    }
+
+    // Gold dashed arrow
+    SDL_SetRenderDrawColor(renderer, 255, 215, 0,
+                           static_cast<Uint8>(180 * alpha));
+    float dx = static_cast<float>(toX - fromX);
+    float dy = static_cast<float>(toY - fromY);
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len > 0) {
+      float dashLen = 6.0f;
+      int numDashes = static_cast<int>(len / (dashLen * 2));
+      for (int d = 0; d < numDashes; ++d) {
+        float t1 = (d * dashLen * 2) / len;
+        float t2 = (d * dashLen * 2 + dashLen) / len;
+        if (t2 > 1.0f)
+          t2 = 1.0f;
+        SDL_RenderDrawLine(renderer, fromX + static_cast<int>(dx * t1),
+                           fromY + static_cast<int>(dy * t1),
+                           fromX + static_cast<int>(dx * t2),
+                           fromY + static_cast<int>(dy * t2));
+      }
+    }
+  }
+}
+
 // ============== STEP-BY-STEP REPLAY VIEWER (Feature 4) ==============
 
 void GameEngine::StartReplayViewer() {
-  if (!cpuReplayLogger_ || cpuReplayLogger_->GetTotalMoves() == 0) {
-    std::cout << "[Replay] No replay data available. Play a game first."
-              << std::endl;
+  if (!cpuReplayLogger_) {
+    std::cout << "[Replay] No replay logger available." << std::endl;
     return;
   }
 
-  // Wait for any in-flight CPU task and capture its result
+  // Cancel any in-flight CPU task
   if (cpuSolving_ && cpuFuture_.valid()) {
-    cpuCancelFlag_.store(false); // Don't cancel, let it finish
+    cpuCancelFlag_.store(true);
     cpuFuture_.wait();
     if (cpuFuture_.valid()) {
       CPUMove move = cpuFuture_.get();
-      cpuSolving_ = false;
-      // Record the last move if it's valid
       if (move.isValid() && move.intersection_reduction > 0) {
+        cpuNodes_[move.node_id].position = move.to_position;
+        cpuIntersectionCount_ = move.intersections_after;
         cpuReplayLogger_->RecordMove(move);
-        std::cout << "[Replay] Captured in-flight move #"
-                  << cpuReplayLogger_->GetTotalMoves() << std::endl;
       }
     }
     cpuSolving_ = false;
   }
+
+  // If no replay data yet, initialize from current graph state
+  if (cpuReplayLogger_->GetTotalMoves() == 0) {
+    if (cpuNodes_.empty()) {
+      // No game state available - can't replay
+      std::cout << "[Replay] No game data. Play a game first." << std::endl;
+      return;
+    }
+    cpuReplayLogger_->StartMatch(cpuNodes_, edges,
+                                 CountIntersections(cpuNodes_, edges));
+  }
+
+  // === Complete the solution synchronously ===
+  // Continue solving from CPU's current state until solved or stuck
+  cpuCancelFlag_.store(false);
+  if (currentSolver_) {
+    currentSolver_->SetCancelFlag(&cpuCancelFlag_);
+  }
+
+  int currentIntersections = CountIntersections(cpuNodes_, edges);
+  int stuckCount = 0;
+  int extraMoves = 0;
+  auto solveStart = std::chrono::steady_clock::now();
+
+  std::cout << "[Replay] Completing solution... Current crossings: "
+            << currentIntersections << std::endl;
+
+  while (currentIntersections > 0 && extraMoves < 100 && stuckCount < MAX_PERTURBATIONS) {
+    // Keep app responsive
+    SDL_PumpEvents();
+
+    // Time limit: 15 seconds
+    auto now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - solveStart).count();
+    if (elapsed > 15.0f) {
+      std::cout << "[Replay] Time limit reached." << std::endl;
+      break;
+    }
+
+    CPUMove move = currentSolver_->FindBestMove(cpuNodes_, edges);
+
+    if (move.isValid()) {
+      cpuNodes_[move.node_id].position = move.to_position;
+      currentIntersections = CountIntersections(cpuNodes_, edges);
+      move.intersections_after = currentIntersections;
+      cpuReplayLogger_->RecordMove(move);
+      ++extraMoves;
+
+      if (move.intersection_reduction > 0) {
+        stuckCount = 0;
+      } else {
+        // Lateral move - still stuck
+        ++stuckCount;
+      }
+    } else {
+      // Solver stuck - try perturbation
+      ++stuckCount;
+      if (stuckCount >= MAX_PERTURBATIONS) break;
+
+      // Find nodes involved in crossings and perturb one
+      std::vector<int> crossedNodes;
+      for (const Edge &e1 : edges) {
+        for (const Edge &e2 : edges) {
+          if (e1.sharesVertex(e2)) continue;
+          if (e1.u_id >= static_cast<int>(cpuNodes_.size()) ||
+              e1.v_id >= static_cast<int>(cpuNodes_.size()) ||
+              e2.u_id >= static_cast<int>(cpuNodes_.size()) ||
+              e2.v_id >= static_cast<int>(cpuNodes_.size())) continue;
+          const Vec2 &a = cpuNodes_[e1.u_id].position;
+          const Vec2 &b = cpuNodes_[e1.v_id].position;
+          const Vec2 &c = cpuNodes_[e2.u_id].position;
+          const Vec2 &d = cpuNodes_[e2.v_id].position;
+          if (CheckIntersection(a, b, c, d)) {
+            crossedNodes.push_back(e1.u_id);
+            crossedNodes.push_back(e1.v_id);
+          }
+        }
+      }
+
+      if (!crossedNodes.empty()) {
+        int idx = crossedNodes[stuckCount % crossedNodes.size()];
+        if (idx >= 0 && idx < static_cast<int>(cpuNodes_.size()) &&
+            !cpuNodes_[idx].adjacencyList.empty()) {
+          CPUMove perturbMove;
+          perturbMove.node_id = idx;
+          perturbMove.from_position = cpuNodes_[idx].position;
+          perturbMove.intersections_before = currentIntersections;
+
+          Vec2 centroid(0, 0);
+          int count = 0;
+          for (int nid : cpuNodes_[idx].adjacencyList) {
+            if (nid >= 0 && nid < static_cast<int>(cpuNodes_.size())) {
+              centroid = centroid + cpuNodes_[nid].position;
+              ++count;
+            }
+          }
+          if (count > 0) {
+            centroid = centroid * (1.0f / static_cast<float>(count));
+            centroid.x += static_cast<float>((stuckCount * 37) % 30 - 15);
+            centroid.y += static_cast<float>((stuckCount * 53) % 30 - 15);
+            centroid.x = std::max(60.0f, std::min(964.0f, centroid.x));
+            centroid.y = std::max(60.0f, std::min(708.0f, centroid.y));
+
+            perturbMove.to_position = centroid;
+            cpuNodes_[idx].position = centroid;
+            currentIntersections = CountIntersections(cpuNodes_, edges);
+            perturbMove.intersections_after = currentIntersections;
+            perturbMove.intersection_reduction =
+                perturbMove.intersections_before - currentIntersections;
+            cpuReplayLogger_->RecordMove(perturbMove);
+            ++extraMoves;
+          }
+        }
+      }
+    }
+  }
+
+  std::cout << "[Replay] Solution complete. Total moves: "
+            << cpuReplayLogger_->GetTotalMoves()
+            << ", Final crossings: " << currentIntersections << std::endl;
 
   currentPhase = GamePhase::REPLAY_VIEWER;
   replayCurrentStep_ = 0;
@@ -2548,6 +2931,101 @@ void GameEngine::ReplayGoToStep(int step) {
   }
 
   replayCurrentStep_ = step;
+
+  // Compute candidate positions for visualization
+  if (replayShowCandidates_) {
+    ComputeReplayCandidates();
+  }
+}
+
+void GameEngine::ComputeReplayCandidates() {
+  replayCandidates_.clear();
+
+  if (!cpuReplayLogger_ || replayCurrentStep_ <= 0)
+    return;
+
+  int totalMoves = cpuReplayLogger_->GetTotalMoves();
+  if (replayCurrentStep_ > totalMoves)
+    return;
+
+  const CPUMove &move = cpuReplayLogger_->GetMoveAt(replayCurrentStep_);
+  if (!move.isValid())
+    return;
+
+  // Build the graph state BEFORE this move (replay steps 1..step-1)
+  const auto &initialPositions = cpuReplayLogger_->GetInitialPositions();
+  std::vector<Node> preNodes(initialPositions.size());
+  for (size_t i = 0; i < initialPositions.size(); ++i) {
+    preNodes[i] = Node(static_cast<int>(i), initialPositions[i]);
+  }
+  for (int s = 1; s < replayCurrentStep_; ++s) {
+    const CPUMove &prevMove = cpuReplayLogger_->GetMoveAt(s);
+    if (prevMove.isValid() &&
+        prevMove.node_id < static_cast<int>(preNodes.size())) {
+      preNodes[prevMove.node_id].position = prevMove.to_position;
+    }
+  }
+
+  int nodeId = move.node_id;
+  if (nodeId < 0 || nodeId >= static_cast<int>(preNodes.size()))
+    return;
+
+  int currentIntersections = CountIntersections(preNodes, replayEdges_);
+
+  // Generate candidate positions (same grid as GreedySolver)
+  constexpr float GRID_SPACING = 80.0f;
+  constexpr float MARGIN = 60.0f;
+  constexpr float W = 1024.0f;
+  constexpr float H = 768.0f;
+
+  std::vector<Vec2> candidatePositions;
+
+  // Grid candidates
+  for (float x = MARGIN; x <= W - MARGIN; x += GRID_SPACING) {
+    for (float y = MARGIN; y <= H - MARGIN; y += GRID_SPACING) {
+      candidatePositions.emplace_back(x, y);
+    }
+  }
+
+  // Neighbor-based candidates
+  if (nodeId < static_cast<int>(preNodes.size())) {
+    for (const auto &edge : replayEdges_) {
+      int neighborId = -1;
+      if (edge.u_id == nodeId)
+        neighborId = edge.v_id;
+      else if (edge.v_id == nodeId)
+        neighborId = edge.u_id;
+
+      if (neighborId >= 0 &&
+          neighborId < static_cast<int>(preNodes.size())) {
+        const Vec2 &npos = preNodes[neighborId].position;
+        float radius = 40.0f;
+        for (int i = 0; i < 8; ++i) {
+          float angle =
+              2.0f * static_cast<float>(M_PI) * static_cast<float>(i) / 8.0f;
+          Vec2 candidate(npos.x + std::cos(angle) * radius,
+                         npos.y + std::sin(angle) * radius);
+          candidate.x = std::max(MARGIN, std::min(W - MARGIN, candidate.x));
+          candidate.y = std::max(MARGIN, std::min(H - MARGIN, candidate.y));
+          candidatePositions.push_back(candidate);
+        }
+      }
+    }
+  }
+
+  // Evaluate each candidate
+  Vec2 originalPos = preNodes[nodeId].position;
+  for (const Vec2 &cpos : candidatePositions) {
+    preNodes[nodeId].position = cpos;
+    int newCount = CountIntersections(preNodes, replayEdges_);
+    preNodes[nodeId].position = originalPos;
+
+    ReplayCandidate rc;
+    rc.position = cpos;
+    rc.intersections = newCount;
+    rc.reduction = currentIntersections - newCount;
+    replayCandidates_.push_back(rc);
+  }
 }
 
 void GameEngine::HandleReplayInput(const SDL_Event &event) {
@@ -2571,6 +3049,14 @@ void GameEngine::HandleReplayInput(const SDL_Event &event) {
     case SDLK_SPACE:
       replayPlaying_ = !replayPlaying_;
       replayLastStepTime_ = std::chrono::steady_clock::now();
+      return;
+    case SDLK_c:
+      replayShowCandidates_ = !replayShowCandidates_;
+      if (replayShowCandidates_) {
+        ComputeReplayCandidates();
+      } else {
+        replayCandidates_.clear();
+      }
       return;
     }
   }
@@ -2667,6 +3153,32 @@ void GameEngine::RenderReplayViewer() {
                        static_cast<int>(p2.y));
   }
 
+  // Compute per-node crossing involvement for heatmap coloring
+  std::vector<int> nodeCrossingCount(replayNodes_.size(), 0);
+  for (const Edge &e1 : replayEdges_) {
+    if (e1.u_id < 0 || e1.u_id >= static_cast<int>(replayNodes_.size()) ||
+        e1.v_id < 0 || e1.v_id >= static_cast<int>(replayNodes_.size()))
+      continue;
+    for (const Edge &e2 : replayEdges_) {
+      if (e1.sharesVertex(e2)) continue;
+      if (e2.u_id < 0 || e2.u_id >= static_cast<int>(replayNodes_.size()) ||
+          e2.v_id < 0 || e2.v_id >= static_cast<int>(replayNodes_.size()))
+        continue;
+      const Vec2 &a = replayNodes_[e1.u_id].position;
+      const Vec2 &b = replayNodes_[e1.v_id].position;
+      const Vec2 &c = replayNodes_[e2.u_id].position;
+      const Vec2 &d = replayNodes_[e2.v_id].position;
+      if (CheckIntersection(a, b, c, d)) {
+        nodeCrossingCount[e1.u_id]++;
+        nodeCrossingCount[e1.v_id]++;
+      }
+    }
+  }
+  int maxCrossings = 1;
+  for (int nc : nodeCrossingCount) {
+    maxCrossings = std::max(maxCrossings, nc);
+  }
+
   // Draw nodes - highlight the moved node at current step
   int movedNodeId = -1;
   if (replayCurrentStep_ > 0 && replayCurrentStep_ <= totalMoves) {
@@ -2681,8 +3193,16 @@ void GameEngine::RenderReplayViewer() {
     SDL_Color fillColor;
     if (node.id == movedNodeId) {
       fillColor = {255, 200, 50, 255}; // Gold for the moved node
+    } else if (nodeCrossingCount[node.id] > 0) {
+      // Heatmap: red for high crossing involvement, orange for low
+      float t = static_cast<float>(nodeCrossingCount[node.id]) /
+                static_cast<float>(maxCrossings);
+      fillColor = {static_cast<Uint8>(180 + 75 * t),
+                   static_cast<Uint8>(100 * (1.0f - t)),
+                   static_cast<Uint8>(50 * (1.0f - t)), 255};
     } else {
-      fillColor = Colors::NODE_FILL;
+      // Green for nodes not involved in any crossing
+      fillColor = {80, 200, 100, 255};
     }
 
     SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b,
@@ -2714,6 +3234,209 @@ void GameEngine::RenderReplayViewer() {
         radiusError += 2 * (by - bx + 1);
       }
     }
+
+    // Draw crossing count label on hot nodes
+    if (nodeCrossingCount[node.id] > 0 && menuBar) {
+      std::string countStr = std::to_string(nodeCrossingCount[node.id]);
+      SDL_Rect labelRect = {cx - 8, cy - r - 14, 16, 12};
+      SDL_Color labelColor = {255, 100, 80, 255};
+      menuBar->RenderTextCentered(countStr, labelRect, labelColor);
+    }
+  }
+
+  // === Candidate Position Visualization ===
+  if (replayShowCandidates_ && !replayCandidates_.empty() &&
+      replayCurrentStep_ > 0) {
+    // Find min/max reduction for color scaling
+    int minReduction = 0;
+    int maxReduction = 0;
+    for (const auto &c : replayCandidates_) {
+      minReduction = std::min(minReduction, c.reduction);
+      maxReduction = std::max(maxReduction, c.reduction);
+    }
+
+    // Get the chosen position for this step
+    const CPUMove &move = cpuReplayLogger_->GetMoveAt(replayCurrentStep_);
+
+    // Draw all candidate positions as color-coded dots
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    for (const auto &c : replayCandidates_) {
+      int cx = static_cast<int>(c.position.x);
+      int cy = static_cast<int>(c.position.y);
+
+      // Color: red (worst) → yellow (neutral) → green (best)
+      SDL_Color dotColor;
+      if (maxReduction > 0 && c.reduction > 0) {
+        // Positive reduction = good (yellow→green)
+        float t = static_cast<float>(c.reduction) /
+                  static_cast<float>(maxReduction);
+        dotColor = {static_cast<Uint8>(255 * (1.0f - t)),
+                    static_cast<Uint8>(150 + 105 * t), 50,
+                    static_cast<Uint8>(100 + 100 * t)};
+      } else if (minReduction < 0 && c.reduction < 0) {
+        // Negative reduction = bad (yellow→red)
+        float t = static_cast<float>(-c.reduction) /
+                  static_cast<float>(-minReduction);
+        dotColor = {static_cast<Uint8>(200 + 55 * t),
+                    static_cast<Uint8>(150 * (1.0f - t)), 30,
+                    static_cast<Uint8>(80 + 60 * t)};
+      } else {
+        // Zero reduction = neutral (yellow)
+        dotColor = {200, 180, 50, 80};
+      }
+
+      // Check if this is the chosen position
+      bool isChosen =
+          std::abs(c.position.x - move.to_position.x) < 2.0f &&
+          std::abs(c.position.y - move.to_position.y) < 2.0f;
+
+      if (isChosen) {
+        // Draw bright gold ring for chosen position
+        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
+        for (int dy = -8; dy <= 8; ++dy) {
+          for (int dx = -8; dx <= 8; ++dx) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 >= 36 && d2 <= 64) { // Ring between radius 6-8
+              SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+            }
+          }
+        }
+        // Fill center with bright green
+        SDL_SetRenderDrawColor(renderer, 50, 255, 50, 255);
+        for (int dy = -5; dy <= 5; ++dy) {
+          for (int dx = -5; dx <= 5; ++dx) {
+            if (dx * dx + dy * dy <= 25) {
+              SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+            }
+          }
+        }
+
+        // Draw "CHOSEN" label with reduction count
+        if (menuBar) {
+          std::string chosenLabel =
+              "BEST: -" + std::to_string(move.intersection_reduction) +
+              " crossings";
+          SDL_Rect labelRect = {cx - 60, cy - 22, 120, 14};
+          menuBar->RenderTextCentered(chosenLabel, labelRect,
+                                      {255, 215, 0, 255});
+        }
+      } else {
+        // Draw small dot for other candidates
+        SDL_SetRenderDrawColor(renderer, dotColor.r, dotColor.g, dotColor.b,
+                               dotColor.a);
+        int radius = (c.reduction > 0) ? 3 : 2;
+        for (int dy = -radius; dy <= radius; ++dy) {
+          for (int dx = -radius; dx <= radius; ++dx) {
+            if (dx * dx + dy * dy <= radius * radius) {
+              SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
+            }
+          }
+        }
+      }
+    }
+
+    // Draw "from" position marker (where the node was before the move)
+    if (move.isValid()) {
+      int fromX = static_cast<int>(move.from_position.x);
+      int fromY = static_cast<int>(move.from_position.y);
+
+      // Red X at the original position
+      SDL_SetRenderDrawColor(renderer, 255, 80, 80, 200);
+      for (int offset = -1; offset <= 1; ++offset) {
+        SDL_RenderDrawLine(renderer, fromX - 6, fromY - 6 + offset,
+                           fromX + 6, fromY + 6 + offset);
+        SDL_RenderDrawLine(renderer, fromX + 6, fromY - 6 + offset,
+                           fromX - 6, fromY + 6 + offset);
+      }
+    }
+
+    // Draw arrow from original position to chosen position
+    if (move.isValid()) {
+      int fromX = static_cast<int>(move.from_position.x);
+      int fromY = static_cast<int>(move.from_position.y);
+      int toX = static_cast<int>(move.to_position.x);
+      int toY = static_cast<int>(move.to_position.y);
+
+      SDL_SetRenderDrawColor(renderer, 255, 215, 0, 180);
+      // Dashed line effect
+      float dx = static_cast<float>(toX - fromX);
+      float dy = static_cast<float>(toY - fromY);
+      float len = std::sqrt(dx * dx + dy * dy);
+      if (len > 0) {
+        float dashLen = 8.0f;
+        int numDashes = static_cast<int>(len / (dashLen * 2));
+        for (int d = 0; d < numDashes; ++d) {
+          float t1 = (d * dashLen * 2) / len;
+          float t2 = (d * dashLen * 2 + dashLen) / len;
+          if (t2 > 1.0f) t2 = 1.0f;
+          SDL_RenderDrawLine(
+              renderer, fromX + static_cast<int>(dx * t1),
+              fromY + static_cast<int>(dy * t1),
+              fromX + static_cast<int>(dx * t2),
+              fromY + static_cast<int>(dy * t2));
+        }
+      }
+    }
+
+    // === Candidate Legend (bottom-left) ===
+    int legendX = 10;
+    int legendY = winH - 160;
+    int legendW = 190;
+    int legendH = 95;
+
+    SDL_SetRenderDrawColor(renderer, 20, 20, 25, 220);
+    SDL_Rect legendBg = {legendX, legendY, legendW, legendH};
+    SDL_RenderFillRect(renderer, &legendBg);
+    SDL_SetRenderDrawColor(renderer, 80, 80, 100, 255);
+    SDL_RenderDrawRect(renderer, &legendBg);
+
+    if (menuBar) {
+      SDL_Rect titleR = {legendX + 5, legendY + 3, legendW - 10, 14};
+      menuBar->RenderTextCentered("Candidates (C to toggle)", titleR,
+                                  {200, 200, 210, 255});
+
+      // Green dot = good
+      SDL_SetRenderDrawColor(renderer, 50, 255, 50, 255);
+      for (int dy = -3; dy <= 3; ++dy)
+        for (int dx = -3; dx <= 3; ++dx)
+          if (dx * dx + dy * dy <= 9)
+            SDL_RenderDrawPoint(renderer, legendX + 15, legendY + 28 + dy);
+      SDL_Rect goodR = {legendX + 25, legendY + 22, legendW - 30, 14};
+      menuBar->RenderTextCentered("= Removes crossings", goodR,
+                                  {50, 205, 50, 255});
+
+      // Yellow dot = neutral
+      SDL_SetRenderDrawColor(renderer, 200, 180, 50, 200);
+      for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx)
+          if (dx * dx + dy * dy <= 4)
+            SDL_RenderDrawPoint(renderer, legendX + 15, legendY + 46 + dy);
+      SDL_Rect neutR = {legendX + 25, legendY + 40, legendW - 30, 14};
+      menuBar->RenderTextCentered("= No change", neutR,
+                                  {200, 180, 50, 255});
+
+      // Red dot = bad
+      SDL_SetRenderDrawColor(renderer, 255, 80, 30, 200);
+      for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx)
+          if (dx * dx + dy * dy <= 4)
+            SDL_RenderDrawPoint(renderer, legendX + 15, legendY + 64 + dy);
+      SDL_Rect badR = {legendX + 25, legendY + 58, legendW - 30, 14};
+      menuBar->RenderTextCentered("= Adds crossings", badR,
+                                  {255, 80, 30, 255});
+
+      // Gold ring = chosen
+      SDL_SetRenderDrawColor(renderer, 255, 215, 0, 255);
+      for (int dy = -4; dy <= 4; ++dy)
+        for (int dx = -4; dx <= 4; ++dx) {
+          int d2 = dx * dx + dy * dy;
+          if (d2 >= 9 && d2 <= 16)
+            SDL_RenderDrawPoint(renderer, legendX + 15, legendY + 82 + dy);
+        }
+      SDL_Rect chosenR = {legendX + 25, legendY + 76, legendW - 30, 14};
+      menuBar->RenderTextCentered("= CPU's choice", chosenR,
+                                  {255, 215, 0, 255});
+    }
   }
 
   // === Move Annotation Panel (right side) ===
@@ -2742,6 +3465,9 @@ void GameEngine::RenderReplayViewer() {
 
     int textY = panelY + 32;
 
+    // Compute live intersection count from current replay state
+    int liveIntersections = CountIntersections(replayNodes_, replayEdges_);
+
     if (replayCurrentStep_ == 0) {
       // Initial state
       SDL_Rect initRect = {panelX + 10, textY, panelW - 20, 18};
@@ -2749,10 +3475,12 @@ void GameEngine::RenderReplayViewer() {
                                   {180, 180, 185, 255});
       textY += 24;
 
-      std::string intStr = "Intersections: " +
-                           std::to_string(cpuReplayLogger_->GetInitialIntersections());
+      std::string intStr = "Crossings: " + std::to_string(liveIntersections);
       SDL_Rect intRect = {panelX + 10, textY, panelW - 20, 18};
-      menuBar->RenderTextCentered(intStr, intRect, {200, 200, 210, 255});
+      SDL_Color intColor = liveIntersections == 0
+                               ? SDL_Color{50, 205, 50, 255}
+                               : SDL_Color{220, 50, 50, 255};
+      menuBar->RenderTextCentered(intStr, intRect, intColor);
     } else {
       const CPUMove &move = cpuReplayLogger_->GetMoveAt(replayCurrentStep_);
 
@@ -2774,15 +3502,19 @@ void GameEngine::RenderReplayViewer() {
                                   {200, 200, 210, 255});
       textY += 22;
 
-      // Intersection change
+      // Live intersection count with reduction from previous step
+      int prevIntersections = move.intersections_before;
+      int reduction = prevIntersections - liveIntersections;
       std::ostringstream intStr;
-      intStr << "Intersections: " << move.intersections_before << " -> "
-             << move.intersections_after << " (-"
-             << move.intersection_reduction << ")";
+      intStr << "Crossings: " << liveIntersections;
+      if (reduction > 0) {
+        intStr << " (-" << reduction << ")";
+      }
       SDL_Rect intRect = {panelX + 5, textY, panelW - 10, 16};
-      SDL_Color intColor = move.intersection_reduction > 0
+      SDL_Color intColor = liveIntersections == 0
                                ? SDL_Color{50, 205, 50, 255}
-                               : SDL_Color{200, 200, 210, 255};
+                               : (reduction > 0 ? SDL_Color{50, 205, 50, 255}
+                                                : SDL_Color{200, 200, 210, 255});
       menuBar->RenderTextCentered(intStr.str(), intRect, intColor);
       textY += 22;
 
@@ -2880,6 +3612,36 @@ void GameEngine::RenderReplayViewer() {
     SDL_Rect hintRect = {10, btnY + 5, 200, 20};
     menuBar->RenderTextCentered("Arrow keys / Space", hintRect,
                                 {100, 100, 105, 255});
+  }
+
+  // Heatmap legend (bottom-left)
+  if (menuBar) {
+    int legendX = 10;
+    int legendY = winH - 135;
+
+    // Legend background
+    SDL_Rect legendBg = {legendX, legendY, 160, 30};
+    SDL_SetRenderDrawColor(renderer, 25, 25, 30, 220);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_RenderFillRect(renderer, &legendBg);
+
+    // Green dot + label
+    SDL_SetRenderDrawColor(renderer, 80, 200, 100, 255);
+    for (int dy = -4; dy <= 4; ++dy)
+      for (int dx = -4; dx <= 4; ++dx)
+        if (dx * dx + dy * dy <= 16)
+          SDL_RenderDrawPoint(renderer, legendX + 12, legendY + 15 + dy);
+    SDL_Rect safeLabel = {legendX + 20, legendY + 8, 50, 14};
+    menuBar->RenderTextCentered("Safe", safeLabel, {80, 200, 100, 255});
+
+    // Red dot + label
+    SDL_SetRenderDrawColor(renderer, 255, 80, 50, 255);
+    for (int dy = -4; dy <= 4; ++dy)
+      for (int dx = -4; dx <= 4; ++dx)
+        if (dx * dx + dy * dy <= 16)
+          SDL_RenderDrawPoint(renderer, legendX + 90, legendY + 15 + dy);
+    SDL_Rect hotLabel = {legendX + 100, legendY + 8, 50, 14};
+    menuBar->RenderTextCentered("Hot", hotLabel, {255, 80, 50, 255});
   }
 }
 

@@ -12,7 +12,7 @@ public:
   static constexpr float WINDOW_WIDTH = 1024.0f;
   static constexpr float WINDOW_HEIGHT = 768.0f;
   static constexpr int BASE_CASE_THRESHOLD = 3;
-  static constexpr float GRID_SPACING = 80.0f;
+  static constexpr float GRID_SPACING = 50.0f;
   static constexpr float BOUNDARY_MARGIN = 100.0f;
 
   DnCDPSolver() = default;

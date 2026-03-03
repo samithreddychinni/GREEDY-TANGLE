@@ -143,11 +143,27 @@ private:
   bool cpuPaused_ = false;   // Is CPU paused by user?
   std::string winner_ = "";  // "human" or "cpu"
 
+  // CPU stuck/perturbation tracking
+  int cpuStuckCount_ = 0;                     // Consecutive invalid moves
+  static constexpr int MAX_PERTURBATIONS = 8; // Max random restarts before giving up
+
   // CPU delay based on difficulty (makes CPU beatable on easier levels)
   std::chrono::steady_clock::time_point cpuLastMoveTime_;
   static constexpr float CPU_DELAY_EASY = 3.0f;   // 3 seconds between moves
   static constexpr float CPU_DELAY_MEDIUM = 1.5f; // 1.5 seconds
   static constexpr float CPU_DELAY_HARD = 0.0f;   // No delay
+
+  // CPU move visualization (shows candidate positions during gameplay)
+  struct CpuVisCandidate {
+    Vec2 position;
+    int reduction = 0;
+  };
+  std::vector<CpuVisCandidate> cpuVisCandidates_; // Candidates from last move
+  bool cpuVisActive_ = false;      // Currently showing candidate visualization
+  CPUMove cpuVisMove_;             // The move being visualized
+  float cpuVisProgress_ = 0.0f;   // Animation progress 0..1
+  std::chrono::steady_clock::time_point cpuVisStartTime_;
+  static constexpr float CPU_VIS_DURATION = 1.2f; // Show candidates for 1.2s
 
   // Auto-solve mode (forfeit + visualization)
   bool autoSolveActive_ = false;
@@ -169,6 +185,15 @@ private:
   std::vector<Edge> replayEdges_;    // Edges snapshot from the replayed game
   std::chrono::steady_clock::time_point replayLastStepTime_;
   static constexpr float REPLAY_STEP_INTERVAL = 0.8f; // Auto-play speed
+
+  // Replay candidate visualization
+  struct ReplayCandidate {
+    Vec2 position;
+    int intersections = 0; // Intersection count if node moved here
+    int reduction = 0;     // How many crossings this removes
+  };
+  std::vector<ReplayCandidate> replayCandidates_; // Evaluated candidates for current step
+  bool replayShowCandidates_ = true; // Toggle candidate visualization
 
   // Algorithm Comparison / Benchmark Mode (Feature 1)
   struct BenchmarkResult {
@@ -377,11 +402,16 @@ private:
   void ToggleHeatmap();        // Toggle heatmap on/off
   SDL_Color GetHeatmapColor(float score) const; // Map score to color
 
+  // CPU thinking visualization (during gameplay)
+  void ComputeCpuVisCandidates(int nodeId); // Compute candidates for a node
+  void RenderCpuVisualization();           // Render candidate dots during gameplay
+
   // Step-by-Step Replay Viewer (Feature 4)
   void StartReplayViewer();    // Enter replay mode from recorded CPU data
   void RenderReplayViewer();   // Render replay screen with controls and annotations
   void HandleReplayInput(const SDL_Event &event); // Handle replay button clicks
   void ReplayGoToStep(int step); // Update graph state for a specific step
+  void ComputeReplayCandidates(); // Evaluate all candidate positions for current step
 
   // Algorithm Comparison / Benchmark Mode (Feature 1)
   void RunBenchmark();              // Run all 3 solvers on same graph, store results
