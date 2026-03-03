@@ -1152,6 +1152,10 @@ void GameEngine::UpdatePhase() {
   case GamePhase::HOW_IT_WORKS:
     // Static screen, no updates needed
     break;
+  case GamePhase::COMPUTING_BENCHMARK:
+  case GamePhase::COMPUTING_SCALABILITY:
+    // Reserved for future background computation
+    break;
   }
 }
 
@@ -1529,6 +1533,12 @@ void GameEngine::RenderInputDialog() {
 // ============== RACE MODE IMPLEMENTATION ==============
 
 void GameEngine::StartCPURace() {
+  // Ensure nodes are at their final target positions
+  for (size_t i = 0; i < nodes.size() && i < targetPositions.size(); ++i) {
+    nodes[i].position = targetPositions[i];
+  }
+  intersectionCount = CountIntersections(nodes, edges);
+
   // Copy human's graph state for CPU to solve independently
   cpuNodes_ = nodes;
   cpuIntersectionCount_ = intersectionCount;
@@ -2459,9 +2469,20 @@ void GameEngine::StartReplayViewer() {
     return;
   }
 
-  // Wait for any in-flight CPU task
+  // Wait for any in-flight CPU task and capture its result
   if (cpuSolving_ && cpuFuture_.valid()) {
+    cpuCancelFlag_.store(false); // Don't cancel, let it finish
     cpuFuture_.wait();
+    if (cpuFuture_.valid()) {
+      CPUMove move = cpuFuture_.get();
+      cpuSolving_ = false;
+      // Record the last move if it's valid
+      if (move.isValid() && move.intersection_reduction > 0) {
+        cpuReplayLogger_->RecordMove(move);
+        std::cout << "[Replay] Captured in-flight move #"
+                  << cpuReplayLogger_->GetTotalMoves() << std::endl;
+      }
+    }
     cpuSolving_ = false;
   }
 
@@ -2474,10 +2495,25 @@ void GameEngine::StartReplayViewer() {
   replayNodes_.resize(initialPositions.size());
   for (size_t i = 0; i < initialPositions.size(); ++i) {
     replayNodes_[i] = Node(static_cast<int>(i), initialPositions[i]);
+    // Copy adjacency lists from cpuNodes_ (the game's graph)
+    if (i < cpuNodes_.size()) {
+      replayNodes_[i].adjacencyList = cpuNodes_[i].adjacencyList;
+    } else if (i < nodes.size()) {
+      replayNodes_[i].adjacencyList = nodes[i].adjacencyList;
+    }
+  }
+
+  // Build edges from ReplayLogger's stored edge data
+  const auto &edgePairs = cpuReplayLogger_->GetEdgePairs();
+  replayEdges_.clear();
+  replayEdges_.reserve(edgePairs.size());
+  for (const auto &[u, v] : edgePairs) {
+    replayEdges_.emplace_back(u, v);
   }
 
   std::cout << "[Replay] Entering replay viewer. Total moves: "
-            << cpuReplayLogger_->GetTotalMoves() << std::endl;
+            << cpuReplayLogger_->GetTotalMoves()
+            << ", Edges: " << replayEdges_.size() << std::endl;
 }
 
 void GameEngine::ReplayGoToStep(int step) {
@@ -2495,8 +2531,10 @@ void GameEngine::ReplayGoToStep(int step) {
   replayNodes_.resize(initialPositions.size());
   for (size_t i = 0; i < initialPositions.size(); ++i) {
     replayNodes_[i] = Node(static_cast<int>(i), initialPositions[i]);
-    if (i < nodes.size()) {
-       replayNodes_[i].adjacencyList = nodes[i].adjacencyList;
+    if (i < cpuNodes_.size()) {
+      replayNodes_[i].adjacencyList = cpuNodes_[i].adjacencyList;
+    } else if (i < nodes.size()) {
+      replayNodes_[i].adjacencyList = nodes[i].adjacencyList;
     }
   }
 
@@ -2594,8 +2632,8 @@ void GameEngine::RenderReplayViewer() {
   SDL_GetWindowSize(window, &winW, &winH);
   int totalMoves = cpuReplayLogger_->GetTotalMoves();
 
-  // Draw edges using replay node positions
-  for (const Edge &edge : edges) {
+  // Draw edges using replay node positions and stored replay edges
+  for (const Edge &edge : replayEdges_) {
     if (edge.u_id < 0 ||
         edge.u_id >= static_cast<int>(replayNodes_.size()) ||
         edge.v_id < 0 || edge.v_id >= static_cast<int>(replayNodes_.size()))
@@ -2606,7 +2644,7 @@ void GameEngine::RenderReplayViewer() {
 
     // Check intersection for this edge
     bool isIntersecting = false;
-    for (const Edge &other : edges) {
+    for (const Edge &other : replayEdges_) {
       if (edge.sharesVertex(other))
         continue;
       if (other.u_id < 0 ||

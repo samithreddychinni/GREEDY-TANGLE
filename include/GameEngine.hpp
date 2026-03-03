@@ -166,6 +166,7 @@ private:
   int replayCurrentStep_ = 0;        // 0 = initial state, 1..N = after move N
   bool replayPlaying_ = false;       // Auto-play mode
   std::vector<Node> replayNodes_;    // Graph state for replay rendering
+  std::vector<Edge> replayEdges_;    // Edges snapshot from the replayed game
   std::chrono::steady_clock::time_point replayLastStepTime_;
   static constexpr float REPLAY_STEP_INTERVAL = 0.8f; // Auto-play speed
 

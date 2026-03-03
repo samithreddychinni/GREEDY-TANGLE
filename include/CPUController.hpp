@@ -80,6 +80,9 @@ public:
   const std::vector<Vec2> &GetInitialPositions() const {
     return initialPositions_;
   }
+  const std::vector<std::pair<int, int>> &GetEdgePairs() const {
+    return edges_;
+  }
   int GetInitialIntersections() const { return initialIntersections_; }
 
 private:
