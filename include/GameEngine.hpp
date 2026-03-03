@@ -184,7 +184,16 @@ private:
   std::vector<Node> replayNodes_;    // Graph state for replay rendering
   std::vector<Edge> replayEdges_;    // Edges snapshot from the replayed game
   std::chrono::steady_clock::time_point replayLastStepTime_;
-  static constexpr float REPLAY_STEP_INTERVAL = 0.8f; // Auto-play speed
+  static constexpr float REPLAY_STEP_INTERVAL = 1.2f; // Auto-play speed (slower for animation)
+
+  // Replay animation (smooth node movement between steps)
+  bool replayAnimating_ = false;
+  float replayAnimProgress_ = 0.0f;
+  std::chrono::steady_clock::time_point replayAnimStartTime_;
+  static constexpr float REPLAY_ANIM_DURATION = 0.5f; // seconds per move animation
+  Vec2 replayAnimFrom_;        // Old position of animated node
+  Vec2 replayAnimTo_;          // New position of animated node
+  int replayAnimNodeId_ = -1;  // Node being animated
 
   // Replay candidate visualization
   struct ReplayCandidate {

@@ -1127,8 +1127,35 @@ void GameEngine::UpdatePhase() {
     break;
 
   case GamePhase::REPLAY_VIEWER:
-    // Auto-play: advance step periodically
-    if (replayPlaying_ && cpuReplayLogger_ &&
+    // Update replay animation
+    if (replayAnimating_) {
+      auto now = std::chrono::steady_clock::now();
+      replayAnimProgress_ =
+          std::chrono::duration<float>(now - replayAnimStartTime_).count() /
+          REPLAY_ANIM_DURATION;
+      if (replayAnimProgress_ >= 1.0f) {
+        replayAnimProgress_ = 1.0f;
+        replayAnimating_ = false;
+        // Apply final position
+        if (replayAnimNodeId_ >= 0 &&
+            replayAnimNodeId_ < static_cast<int>(replayNodes_.size())) {
+          replayNodes_[replayAnimNodeId_].position = replayAnimTo_;
+        }
+      } else {
+        // Interpolate position with ease-out
+        float t = EaseOutCubic(replayAnimProgress_);
+        if (replayAnimNodeId_ >= 0 &&
+            replayAnimNodeId_ < static_cast<int>(replayNodes_.size())) {
+          replayNodes_[replayAnimNodeId_].position.x =
+              replayAnimFrom_.x + t * (replayAnimTo_.x - replayAnimFrom_.x);
+          replayNodes_[replayAnimNodeId_].position.y =
+              replayAnimFrom_.y + t * (replayAnimTo_.y - replayAnimFrom_.y);
+        }
+      }
+    }
+
+    // Auto-play: advance step periodically (only when not animating)
+    if (replayPlaying_ && !replayAnimating_ && cpuReplayLogger_ &&
         replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
       auto now = std::chrono::steady_clock::now();
       float elapsed =
@@ -2909,7 +2936,10 @@ void GameEngine::ReplayGoToStep(int step) {
   if (step > totalMoves)
     step = totalMoves;
 
-  // Rebuild graph state from initial positions up to the given step
+  int prevStep = replayCurrentStep_;
+
+  // Rebuild graph state from initial positions up to step-1
+  // (the last move will be animated if stepping forward by 1)
   const auto &initialPositions = cpuReplayLogger_->GetInitialPositions();
   replayNodes_.resize(initialPositions.size());
   for (size_t i = 0; i < initialPositions.size(); ++i) {
@@ -2921,13 +2951,42 @@ void GameEngine::ReplayGoToStep(int step) {
     }
   }
 
-  // Apply moves 1..step
-  for (int s = 1; s <= step; ++s) {
-    const CPUMove &move = cpuReplayLogger_->GetMoveAt(s);
+  // Check if we should animate (stepping forward by exactly 1)
+  bool shouldAnimate = (step == prevStep + 1) && (step > 0);
+
+  if (shouldAnimate) {
+    // Apply moves 1..step-1 (everything before the animated move)
+    for (int s = 1; s < step; ++s) {
+      const CPUMove &move = cpuReplayLogger_->GetMoveAt(s);
+      if (move.isValid() &&
+          move.node_id < static_cast<int>(replayNodes_.size())) {
+        replayNodes_[move.node_id].position = move.to_position;
+      }
+    }
+
+    // Start animation for the current step's move
+    const CPUMove &move = cpuReplayLogger_->GetMoveAt(step);
     if (move.isValid() &&
         move.node_id < static_cast<int>(replayNodes_.size())) {
-      replayNodes_[move.node_id].position = move.to_position;
+      replayAnimNodeId_ = move.node_id;
+      replayAnimFrom_ = move.from_position;
+      replayAnimTo_ = move.to_position;
+      replayAnimating_ = true;
+      replayAnimProgress_ = 0.0f;
+      replayAnimStartTime_ = std::chrono::steady_clock::now();
+      // Node starts at old position, will be interpolated in UpdatePhase
+      replayNodes_[move.node_id].position = move.from_position;
     }
+  } else {
+    // Instant jump (going backward or jumping multiple steps)
+    for (int s = 1; s <= step; ++s) {
+      const CPUMove &move = cpuReplayLogger_->GetMoveAt(s);
+      if (move.isValid() &&
+          move.node_id < static_cast<int>(replayNodes_.size())) {
+        replayNodes_[move.node_id].position = move.to_position;
+      }
+    }
+    replayAnimating_ = false;
   }
 
   replayCurrentStep_ = step;
@@ -3033,16 +3092,18 @@ void GameEngine::HandleReplayInput(const SDL_Event &event) {
     switch (event.key.keysym.sym) {
     case SDLK_ESCAPE:
       // Return to main menu
+      replayAnimating_ = false;
       currentPhase = GamePhase::MAIN_MENU;
       return;
     case SDLK_RIGHT:
-      if (cpuReplayLogger_ &&
+      if (!replayAnimating_ && cpuReplayLogger_ &&
           replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
         ReplayGoToStep(replayCurrentStep_ + 1);
       }
       return;
     case SDLK_LEFT:
       if (replayCurrentStep_ > 0) {
+        replayAnimating_ = false; // Cancel any animation
         ReplayGoToStep(replayCurrentStep_ - 1);
       }
       return;
@@ -3079,6 +3140,7 @@ void GameEngine::HandleReplayInput(const SDL_Event &event) {
     // Back button
     SDL_Rect backBtn = {cx - btnW * 2 - 15, btnY, btnW, btnH};
     if (SDL_PointInRect(&pt, &backBtn) && replayCurrentStep_ > 0) {
+      replayAnimating_ = false;
       ReplayGoToStep(replayCurrentStep_ - 1);
       replayPlaying_ = false;
       return;
@@ -3094,7 +3156,7 @@ void GameEngine::HandleReplayInput(const SDL_Event &event) {
 
     // Next button
     SDL_Rect nextBtn = {cx + btnW + 15, btnY, btnW, btnH};
-    if (SDL_PointInRect(&pt, &nextBtn) && cpuReplayLogger_ &&
+    if (SDL_PointInRect(&pt, &nextBtn) && !replayAnimating_ && cpuReplayLogger_ &&
         replayCurrentStep_ < cpuReplayLogger_->GetTotalMoves()) {
       ReplayGoToStep(replayCurrentStep_ + 1);
       replayPlaying_ = false;
@@ -3104,6 +3166,7 @@ void GameEngine::HandleReplayInput(const SDL_Event &event) {
     // Exit button
     SDL_Rect exitBtn = {winW - 110, btnY, 100, btnH};
     if (SDL_PointInRect(&pt, &exitBtn)) {
+      replayAnimating_ = false;
       currentPhase = GamePhase::MAIN_MENU;
       return;
     }
@@ -3118,7 +3181,16 @@ void GameEngine::RenderReplayViewer() {
   SDL_GetWindowSize(window, &winW, &winH);
   int totalMoves = cpuReplayLogger_->GetTotalMoves();
 
-  // Draw edges using replay node positions and stored replay edges
+  // Get current move info
+  int movedNodeId = -1;
+  CPUMove currentMove;
+  if (replayCurrentStep_ > 0 && replayCurrentStep_ <= totalMoves) {
+    currentMove = cpuReplayLogger_->GetMoveAt(replayCurrentStep_);
+    movedNodeId = currentMove.node_id;
+  }
+
+  // === Draw edges ===
+  // First pass: draw all edges, highlighting those connected to moved node
   for (const Edge &edge : replayEdges_) {
     if (edge.u_id < 0 ||
         edge.u_id >= static_cast<int>(replayNodes_.size()) ||
@@ -3146,11 +3218,119 @@ void GameEngine::RenderReplayViewer() {
       }
     }
 
+    // Is this edge connected to the moved node?
+    bool isMovedEdge = (movedNodeId >= 0) &&
+                       (edge.u_id == movedNodeId || edge.v_id == movedNodeId);
+
     SDL_Color color = isIntersecting ? Colors::EDGE_CRITICAL : Colors::EDGE_SAFE;
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderDrawLine(renderer, static_cast<int>(p1.x),
-                       static_cast<int>(p1.y), static_cast<int>(p2.x),
-                       static_cast<int>(p2.y));
+
+    // Draw thicker edges for the moved node's connections
+    if (isMovedEdge) {
+      // Draw 3-pixel-wide line for emphasis
+      int x1 = static_cast<int>(p1.x), y1 = static_cast<int>(p1.y);
+      int x2 = static_cast<int>(p2.x), y2 = static_cast<int>(p2.y);
+      if (isIntersecting) {
+        // Bright pulsing red for crossing edges being fixed
+        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
+      } else {
+        // Bright cyan for non-crossing edges of moved node
+        SDL_SetRenderDrawColor(renderer, 100, 220, 255, 255);
+      }
+      for (int offset = -1; offset <= 1; ++offset) {
+        SDL_RenderDrawLine(renderer, x1, y1 + offset, x2, y2 + offset);
+        SDL_RenderDrawLine(renderer, x1 + offset, y1, x2 + offset, y2);
+      }
+    } else {
+      SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+      SDL_RenderDrawLine(renderer, static_cast<int>(p1.x),
+                         static_cast<int>(p1.y), static_cast<int>(p2.x),
+                         static_cast<int>(p2.y));
+    }
+  }
+
+  // === Ghost marker at old position (before animation completes) ===
+  if (replayCurrentStep_ > 0 && currentMove.isValid()) {
+    int fromX = static_cast<int>(currentMove.from_position.x);
+    int fromY = static_cast<int>(currentMove.from_position.y);
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // Draw faded ghost circle at old position
+    Uint8 ghostAlpha = replayAnimating_
+                           ? static_cast<Uint8>(180)
+                           : static_cast<Uint8>(100);
+    SDL_SetRenderDrawColor(renderer, 255, 80, 80, ghostAlpha);
+    int gr = 8;
+    for (int dy = -gr; dy <= gr; ++dy) {
+      for (int dx = -gr; dx <= gr; ++dx) {
+        int d2 = dx * dx + dy * dy;
+        if (d2 >= (gr - 2) * (gr - 2) && d2 <= gr * gr) {
+          SDL_RenderDrawPoint(renderer, fromX + dx, fromY + dy);
+        }
+      }
+    }
+
+    // Red X inside ghost
+    SDL_SetRenderDrawColor(renderer, 255, 80, 80, ghostAlpha);
+    for (int offset = -1; offset <= 1; ++offset) {
+      SDL_RenderDrawLine(renderer, fromX - 5, fromY - 5 + offset,
+                         fromX + 5, fromY + 5 + offset);
+      SDL_RenderDrawLine(renderer, fromX + 5, fromY - 5 + offset,
+                         fromX - 5, fromY + 5 + offset);
+    }
+
+    // "FROM" label
+    if (menuBar) {
+      SDL_Rect fromLabel = {fromX - 18, fromY + gr + 2, 36, 12};
+      menuBar->RenderTextCentered("FROM", fromLabel, {255, 100, 80, ghostAlpha});
+    }
+
+    // Draw thick arrow from old to new position
+    int toX = static_cast<int>(currentMove.to_position.x);
+    int toY = static_cast<int>(currentMove.to_position.y);
+
+    SDL_SetRenderDrawColor(renderer, 255, 215, 0, 200);
+    float dx = static_cast<float>(toX - fromX);
+    float dy = static_cast<float>(toY - fromY);
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len > 10.0f) {
+      // Draw thick dashed arrow line
+      for (int offset = -1; offset <= 1; ++offset) {
+        float dashLen = 8.0f;
+        int numDashes = static_cast<int>(len / (dashLen * 2));
+        for (int d = 0; d < numDashes; ++d) {
+          float t1 = (d * dashLen * 2) / len;
+          float t2 = (d * dashLen * 2 + dashLen) / len;
+          if (t2 > 1.0f) t2 = 1.0f;
+          SDL_RenderDrawLine(
+              renderer, fromX + static_cast<int>(dx * t1),
+              fromY + static_cast<int>(dy * t1) + offset,
+              fromX + static_cast<int>(dx * t2),
+              fromY + static_cast<int>(dy * t2) + offset);
+        }
+      }
+
+      // Arrowhead at destination
+      float nx = dx / len;
+      float ny = dy / len;
+      float perpX = -ny;
+      float perpY = nx;
+      int headLen = 12;
+      int headW = 6;
+      int ax1 = toX - static_cast<int>(nx * headLen + perpX * headW);
+      int ay1 = toY - static_cast<int>(ny * headLen + perpY * headW);
+      int ax2 = toX - static_cast<int>(nx * headLen - perpX * headW);
+      int ay2 = toY - static_cast<int>(ny * headLen - perpY * headW);
+      SDL_RenderDrawLine(renderer, toX, toY, ax1, ay1);
+      SDL_RenderDrawLine(renderer, toX, toY, ax2, ay2);
+      SDL_RenderDrawLine(renderer, ax1, ay1, ax2, ay2);
+    }
+
+    // "TO" label at destination
+    if (menuBar) {
+      SDL_Rect toLabel = {toX - 12, toY - 8 - 14, 24, 12};
+      menuBar->RenderTextCentered("TO", toLabel, {255, 215, 0, 200});
+    }
   }
 
   // Compute per-node crossing involvement for heatmap coloring
@@ -3180,10 +3360,6 @@ void GameEngine::RenderReplayViewer() {
   }
 
   // Draw nodes - highlight the moved node at current step
-  int movedNodeId = -1;
-  if (replayCurrentStep_ > 0 && replayCurrentStep_ <= totalMoves) {
-    movedNodeId = cpuReplayLogger_->GetMoveAt(replayCurrentStep_).node_id;
-  }
 
   for (const Node &node : replayNodes_) {
     int cx = static_cast<int>(node.position.x);
@@ -3241,6 +3417,16 @@ void GameEngine::RenderReplayViewer() {
       SDL_Rect labelRect = {cx - 8, cy - r - 14, 16, 12};
       SDL_Color labelColor = {255, 100, 80, 255};
       menuBar->RenderTextCentered(countStr, labelRect, labelColor);
+    }
+
+    // Draw node ID inside the circle
+    if (menuBar) {
+      std::string idStr = std::to_string(node.id);
+      SDL_Rect idRect = {cx - 6, cy - 6, 12, 12};
+      SDL_Color idColor = (node.id == movedNodeId)
+                              ? SDL_Color{40, 30, 0, 255}
+                              : SDL_Color{30, 30, 35, 255};
+      menuBar->RenderTextCentered(idStr, idRect, idColor);
     }
   }
 
@@ -3331,49 +3517,6 @@ void GameEngine::RenderReplayViewer() {
               SDL_RenderDrawPoint(renderer, cx + dx, cy + dy);
             }
           }
-        }
-      }
-    }
-
-    // Draw "from" position marker (where the node was before the move)
-    if (move.isValid()) {
-      int fromX = static_cast<int>(move.from_position.x);
-      int fromY = static_cast<int>(move.from_position.y);
-
-      // Red X at the original position
-      SDL_SetRenderDrawColor(renderer, 255, 80, 80, 200);
-      for (int offset = -1; offset <= 1; ++offset) {
-        SDL_RenderDrawLine(renderer, fromX - 6, fromY - 6 + offset,
-                           fromX + 6, fromY + 6 + offset);
-        SDL_RenderDrawLine(renderer, fromX + 6, fromY - 6 + offset,
-                           fromX - 6, fromY + 6 + offset);
-      }
-    }
-
-    // Draw arrow from original position to chosen position
-    if (move.isValid()) {
-      int fromX = static_cast<int>(move.from_position.x);
-      int fromY = static_cast<int>(move.from_position.y);
-      int toX = static_cast<int>(move.to_position.x);
-      int toY = static_cast<int>(move.to_position.y);
-
-      SDL_SetRenderDrawColor(renderer, 255, 215, 0, 180);
-      // Dashed line effect
-      float dx = static_cast<float>(toX - fromX);
-      float dy = static_cast<float>(toY - fromY);
-      float len = std::sqrt(dx * dx + dy * dy);
-      if (len > 0) {
-        float dashLen = 8.0f;
-        int numDashes = static_cast<int>(len / (dashLen * 2));
-        for (int d = 0; d < numDashes; ++d) {
-          float t1 = (d * dashLen * 2) / len;
-          float t2 = (d * dashLen * 2 + dashLen) / len;
-          if (t2 > 1.0f) t2 = 1.0f;
-          SDL_RenderDrawLine(
-              renderer, fromX + static_cast<int>(dx * t1),
-              fromY + static_cast<int>(dy * t1),
-              fromX + static_cast<int>(dx * t2),
-              fromY + static_cast<int>(dy * t2));
         }
       }
     }
